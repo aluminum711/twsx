@@ -1,0 +1,22 @@
+{
+  "2330": {
+    "Code": "2330",
+    "Name": "台積電",
+    "InstantPrice": "N/A",
+    "PriceChange": "N/A",
+    "ChangePercentage": "N/A",
+    "YesterdayClose": "897.00",
+    "t": "13:02:50",
+    "v": "17614"
+  },
+  "00878": {
+    "Code": "00878",
+    "Name": "國泰永續高股息",
+    "InstantPrice": "N/A",
+    "PriceChange": "N/A",
+    "ChangePercentage": "N/A",
+    "YesterdayClose": "20.19",
+    "t": "13:02:54",
+    "v": "28949"
+  }
+}
