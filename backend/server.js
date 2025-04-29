@@ -222,19 +222,125 @@ app.post('/api/stock-data', async (req, res) => {
     stockData: results // Wrap the stock data in a 'stockData' key
   };
 
-  // Save the updated stock data to the file
-  // Merge new data with existing data
-  Object.assign(stockData, results);
-  fs.writeFile(dataFilePath, JSON.stringify(stockData, null, 2), (err) => {
-    if (err) {
-      console.error('Error writing stock data to file:', err);
-    } else {
-      console.log('Stock data saved to', dataFilePath);
-    }
-  });
-
   res.json(finalResponse);
 });
+/**
+ * @swagger
+ * /api/user-stocks:
+ *   get:
+ *     summary: Get user's saved stock data
+ *     description: Retrieves the stock data saved by the user from the backend file.
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved user's stock data.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               additionalProperties:
+ *                 type: object
+ *                 properties:
+ *                   Code:
+ *                     type: string
+ *                   Name:
+ *                     type: string
+ *                   InstantPrice:
+ *                     type: string
+ *                   PriceChange:
+ *                     type: string
+ *                   ChangePercentage:
+ *                     type: string
+ *                   YesterdayClose:
+ *                     type: string
+ *                   t:
+ *                     type: string
+ *                   v:
+ *                     type: string
+ *       500:
+ *         description: Failed to read user's stock data from file.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *   post:
+ *     summary: Save user's stock data
+ *     description: Saves the provided stock data to the backend file, overwriting existing data.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             additionalProperties:
+ *               type: object
+ *               properties:
+ *                 Code:
+ *                   type: string
+ *                 Name:
+ *                   type: string
+ *                 InstantPrice:
+ *                   type: string
+ *                 PriceChange:
+ *                   type: string
+ *                 ChangePercentage:
+ *                   type: string
+ *                 YesterdayClose:
+ *                   type: string
+ *                 t:
+ *                   type: string
+ *                 v:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Successfully saved user's stock data.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       500:
+ *         description: Failed to write user's stock data to file.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ */
+app.get('/api/user-stocks', (req, res) => {
+  fs.readFile(dataFilePath, (err, data) => {
+    if (err) {
+      console.error('Error reading stock data file:', err);
+      return res.status(500).json({ error: 'Failed to read stock data' });
+    }
+    try {
+      const stockData = JSON.parse(data);
+      res.json(stockData);
+    } catch (parseError) {
+      console.error('Error parsing stock data file:', parseError);
+      res.status(500).json({ error: 'Failed to parse stock data' });
+    }
+  });
+});
+
+app.post('/api/user-stocks', (req, res) => {
+  const stockDataToSave = req.body;
+  fs.writeFile(dataFilePath, JSON.stringify(stockDataToSave, null, 2), (err) => {
+    if (err) {
+      console.error('Error writing stock data file:', err);
+      return res.status(500).json({ error: 'Failed to save stock data' });
+    }
+    console.log('Stock data saved to', dataFilePath);
+    res.json({ message: 'Stock data saved successfully' });
+  });
+});
+
 /**
  * @swagger
  * /api/taiex-data:
@@ -267,7 +373,6 @@ app.post('/api/stock-data', async (req, res) => {
  *               properties:
  *                 error:
  *                   type: string
- *                   description: Error message.
  */
 // New endpoint for TAIEX data
 app.get('/api/taiex-data', async (req, res) => {
@@ -300,10 +405,21 @@ app.get('/api/taiex-data', async (req, res) => {
       }
 
 
+      // Calculate ValueDiff (z - y)
+      let valueDiff = 'N/A';
+      if (taiexValue && yesterdayClose) {
+          const value = parseFloat(taiexValue);
+          const close = parseFloat(yesterdayClose);
+          if (!isNaN(value) && !isNaN(close)) {
+              valueDiff = (value - close).toFixed(2);
+          }
+      }
+
       const formattedData = {
         taiexData: {
           Value: taiexValue ? parseFloat(taiexValue).toFixed(2) : 'N/A',
-          ChangePercentage: changePercentage
+          ChangePercentage: changePercentage,
+          ValueDiff: valueDiff // Add the calculated ValueDiff
         }
       };
 

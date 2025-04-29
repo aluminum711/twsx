@@ -1,42 +1,4 @@
-{
-  "2317": {
-    "Code": "2317",
-    "Name": "鴻海",
-    "InstantPrice": "143.00",
-    "PriceChange": "0.50",
-    "ChangePercentage": "0.35%",
-    "YesterdayClose": "142.50",
-    "t": "13:30:00",
-    "v": "37640"
-  },
-  "2330": {
-    "Code": "2330",
-    "Name": "台積電",
-    "InstantPrice": "902.00",
-    "PriceChange": "5.00",
-    "ChangePercentage": "0.56%",
-    "YesterdayClose": "897.00",
-    "t": "13:30:00",
-    "v": "24262"
-  },
-  "00878": {
-    "Code": "00878",
-    "Name": "國泰永續高股息",
-    "InstantPrice": "20.29",
-    "PriceChange": "0.10",
-    "ChangePercentage": "0.50%",
-    "YesterdayClose": "20.19",
-    "t": "13:30:00",
-    "v": "33726"
-  },
-  "0050": {
-    "Code": "0050",
-    "Name": "元大台灣50",
-    "InstantPrice": "167.80",
-    "PriceChange": "0.65",
-    "ChangePercentage": "0.39%",
-    "YesterdayClose": "167.15",
-    "t": "13:30:00",
-    "v": "10812"
-  }
-}
+[
+  "2330",
+  "00878"
+]

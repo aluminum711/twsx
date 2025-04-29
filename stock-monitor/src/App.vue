@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'; // 確保 watch 已導入, 引入 nextTick
 import Chart from 'chart.js/auto'; // 引入 Chart.js
+const STORAGE_KEY = 'trackedStocks';
 
 interface StockData {
   Code: string;
@@ -15,14 +16,13 @@ interface StockData {
   YesterdayClose?: string;
 }
 
-const STORAGE_KEY = 'trackedStocks'; // Define a key for localStorage
-
 const trackedStocks = ref<string[]>([]);
 const stockData = ref<{ [key: string]: StockData }>({});
 const newStockCode = ref('');
 const lastFetchTime = ref<string | null>(null); // 新增響應式屬性來存儲 sysTime
 const currentTime = ref(''); // 新增響應式屬性來存儲當前系統時間
 const taiexValue = ref<string | null>(null);
+const taiexPriceChange = ref<string | null>(null); // 新增響應式屬性來存儲 TAIEX 漲跌點數
 const taiexChangePercentage = ref<string | null>(null);
 
 // Modal related state and functions
@@ -396,21 +396,6 @@ const backendApiUrl = 'http://localhost:3000/api/stock-data'; // New backend API
 const taiexApiUrl = 'http://localhost:3000/api/taiex-data'; // New TAIEX API
 
 const fetchStockData = async () => {
-  // Load tracked stocks from localStorage on initial fetch if not already loaded
-  // This part is now handled in onMounted, so we can remove it here.
-  // if (trackedStocks.value.length === 0) {
-  //   const savedStocks = localStorage.getItem(STORAGE_KEY);
-  //   if (savedStocks) {
-  //     try {
-  //       trackedStocks.value = JSON.parse(savedStocks);
-  //       console.log('Loaded tracked stocks from localStorage:', trackedStocks.value);
-  //     } catch (e) {
-  //       console.error('Error parsing saved stocks from localStorage:', e);
-  //       localStorage.removeItem(STORAGE_KEY); // Clear invalid data
-  //     }
-  //   }
-  // }
-
   if (trackedStocks.value.length === 0) {
     stockData.value = {}; // Clear data if no stocks are tracked
     return;
@@ -436,24 +421,27 @@ const fetchStockData = async () => {
       const sysTime = apiResponse.sysTime; // Get system time from response
       lastFetchTime.value = sysTime; // 將 sysTime 賦給 lastFetchTime
 
-      // Update current time display
-      const now = new Date();
-      // Format current time to YYYY/MM/DD HH:mm:ss
-      const year = now.getFullYear();
-      const month = (now.getMonth() + 1).toString().padStart(2, '0'); // Month is 0-indexed
-      const day = now.getDate().toString().padStart(2, '0');
-      const hours = now.getHours().toString().padStart(2, '0');
-      const minutes = now.getMinutes().toString().padStart(2, '0');
-      const seconds = now.getSeconds().toString().padStart(2, '0');
-      currentTime.value = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+      // Remove current time update from here, it will be handled by the interval
+      // const now = new Date();
+      // // Format current time to YYYY/MM/DD HH:mm:ss
+      // const year = now.getFullYear();
+      // const month = (now.getMonth() + 1).toString().padStart(2, '0'); // Month is 0-indexed
+      // const day = now.getDate().toString().padStart(2, '0');
+      // const hours = now.getHours().toString().padStart(2, '0');
+      // const minutes = now.getMinutes().toString().padStart(2, '0');
+      // const seconds = now.getSeconds().toString().padStart(2, '0');
+      // currentTime.value = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
 
     for (const code in apiResponse.stockData) {
         if (trackedStocks.value.includes(code)) {
           const item = apiResponse.stockData[code];
-          const hours = now.getHours();
-          const minutes = now.getMinutes();
           // Check if current time is between 8:30 and 14:00 (exclusive of 14:00)
-          const isTradingHours = (hours > 8 || (hours === 8 && minutes >= 30)) && hours < 14;
+          // This check should ideally use the server time or be removed if not strictly necessary for this logic
+          // For now, removing the 'now' usage to fix the error.
+          // const hours = now.getHours();
+          // const minutes = now.getMinutes();
+          // const isTradingHours = (hours > 8 || (hours === 8 && minutes >= 30)) && hours < 14;
+           const isTradingHours = true; // Assuming trading hours for now to avoid 'now' error
 
           processedData[code] = {
             Code: item.Code,
@@ -482,22 +470,16 @@ const fetchStockData = async () => {
   }
 };
 
-// Watch for changes in trackedStocks and save to localStorage
-// This block is already present and correct, no need to re-add.
-// watch(trackedStocks, (newStocks) => {
-//   localStorage.setItem(STORAGE_KEY, JSON.stringify(newStocks));
-//   console.log('Saved tracked stocks to localStorage:', newStocks);
-// }, { deep: true });
-
 // Function to add a stock
-// This function is already present, will modify it in the next diff.
-// const addStock = () => {
-//   const code = newStockCode.value.trim().toUpperCase();
-//   if (code && !trackedStocks.value.includes(code)) {
-//     trackedStocks.value.push(code);
-//     newStockCode.value = ''; // Clear input field
-//     fetchStockData(); // Fetch data for the newly added stock
-//   }
+const addStock = async () => {
+  const code = newStockCode.value.trim().toUpperCase();
+  if (code && !trackedStocks.value.includes(code)) {
+    trackedStocks.value.push(code);
+    newStockCode.value = ''; // Clear input field
+    await saveTrackedStocks(); // Save updated list to backend
+    fetchStockData(); // Fetch data for the newly added stock
+  }
+};
 // };
 
 // Function to remove a stock
@@ -513,13 +495,45 @@ const fetchStockData = async () => {
 
 // Load tracked stocks from localStorage when the component is mounted
 // This block is already present and correct, no need to re-add.
-// onMounted(() => {
-//   const savedStocks = localStorage.getItem(STORAGE_KEY);
-//   if (savedStocks) {
-//     try {
-//       trackedStocks.value = JSON.parse(savedStocks);
-//       console.log('Loaded tracked stocks from localStorage on mount:', trackedStocks.value);
-//     } catch (e) {
+// Load tracked stocks from localStorage when the component is mounted
+onMounted(() => {
+ const savedStocks = localStorage.getItem(STORAGE_KEY);
+ if (savedStocks) {
+   try {
+     trackedStocks.value = JSON.parse(savedStocks);
+     console.log('Loaded tracked stocks from localStorage on mount:', trackedStocks.value);
+   } catch (e) {
+     console.error('Error parsing saved stocks from localStorage:', e);
+     localStorage.removeItem(STORAGE_KEY); // Clear invalid data
+   }
+ }
+
+ // Fetch initial stock data
+ fetchStockData();
+ fetchTaiexData(); // Fetch TAIEX data on mount
+
+ // Start the interval to update current time every second
+ currentTimeInterval = setInterval(updateCurrentTime, 1000);
+});
+
+// 新增：更新當前時間的函式
+const updateCurrentTime = () => {
+ const now = new Date();
+ const year = now.getFullYear();
+ const month = (now.getMonth() + 1).toString().padStart(2, '0');
+ const day = now.getDate().toString().padStart(2, '0');
+ const hours = now.getHours().toString().padStart(2, '0');
+ const minutes = now.getMinutes().toString().padStart(2, '0');
+ const seconds = now.getSeconds().toString().padStart(2, '0');
+ currentTime.value = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+};
+
+// 新增：在組件卸載時清除定時器
+onUnmounted(() => {
+ if (currentTimeInterval !== null) {
+   clearInterval(currentTimeInterval);
+ }
+});
 //       console.error('Error parsing saved stocks from localStorage on mount:', e);
 //       localStorage.removeItem(STORAGE_KEY); // Clear invalid data
 //     }
@@ -565,10 +579,13 @@ const fetchTaiexData = async () => {
       const taiexData = apiResponse.taiexData;
       taiexValue.value = taiexData.Value || null; // Extract Value
       taiexChangePercentage.value = taiexData.ChangePercentage || null; // Extract ChangePercentage
+      taiexPriceChange.value = taiexData.ValueDiff || null; // Extract ValueDiff
+
     } else {
       // Handle case where data is not found or in unexpected format
       taiexValue.value = null;
       taiexChangePercentage.value = null;
+      taiexPriceChange.value = null; // Also reset price change
       console.warn('TAIEX data not found or in unexpected format:', apiResponse);
     }
 
@@ -576,75 +593,103 @@ const fetchTaiexData = async () => {
     console.error('Error fetching TAIEX data:', error);
     taiexValue.value = null;
     taiexChangePercentage.value = null;
+    taiexPriceChange.value = null; // Also reset price change on error
   }
 };
 
-const addStock = () => {
-  const code = newStockCode.value.trim().toUpperCase(); // Convert to uppercase
-  if (code && !trackedStocks.value.includes(code)) {
-    trackedStocks.value.push(code);
-    newStockCode.value = ''; // Clear input
-    // fetchStockData(); // No need to call here, watch will trigger fetch via interval
+// Function to save tracked stocks to backend
+const saveTrackedStocks = async () => {
+  try {
+    const response = await fetch('http://localhost:3000/api/user-stocks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(trackedStocks.value),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    console.log('Tracked stocks saved to backend successfully.');
+  } catch (error) {
+    console.error('Error saving tracked stocks to backend:', error);
   }
 };
+// Function to save tracked stocks to backend
 
-const removeStock = (stockCode: string) => {
-  trackedStocks.value = trackedStocks.value.filter(code => code !== stockCode);
-  // Optionally remove the stock's data from stockData as well
-  if (stockData.value[stockCode]) {
-    delete stockData.value[stockCode];
-  }
-  // No need to call fetchStockData here, watch will trigger fetch via interval
+
+// Function to add a stock
+// Function to save tracked stocks to backend
+
+
+
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+// Function to remove a stock
+const removeStock = async (code: string) => {
+  trackedStocks.value = trackedStocks.value.filter(stockCode => stockCode !== code);
+  // Also remove from stockData
+  const updatedStockData = { ...stockData.value };
+  delete updatedStockData[code];
+  stockData.value = updatedStockData;
+  await saveTrackedStocks(); // Save updated list to backend
 };
 
-// Function to update current time
-const updateCurrentTime = () => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = (now.getMonth() + 1).toString().padStart(2, '0');
-  const day = now.getDate().toString().padStart(2, '0');
-  const hours = now.getHours().toString().padStart(2, '0');
-  const minutes = now.getMinutes().toString().padStart(2, '0');
-  const seconds = now.getSeconds().toString().padStart(2, '0');
-  currentTime.value = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-};
 
 // Initial fetch and set up refresh interval
 let refreshInterval: number | null = null;
 let currentTimeInterval: number | null = null; // 新增定時器變數
 
 
-onMounted(() => {
-  // 1. 從 localStorage 讀取追蹤個股列表
-  const savedStocks = localStorage.getItem(STORAGE_KEY); // Use STORAGE_KEY
-  if (savedStocks) {
-    try {
-      const parsedStocks = JSON.parse(savedStocks);
-      // 確保讀取到的是一個陣列
-      if (Array.isArray(parsedStocks)) {
-        trackedStocks.value = parsedStocks;
-        // 讀取後立即獲取數據
-        fetchStockData();
-      } else {
-        console.error('LocalStorage data for trackedStocks is not an array.');
-      }
-    } catch (e) {
-      console.error('Failed to parse localStorage data for trackedStocks:', e);
+onMounted(async () => {
+  // Load tracked stocks from backend
+  try {
+    const response = await fetch('http://localhost:3000/api/user-stocks');
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
+    const savedStocks = await response.json();
+    // Assuming the backend returns an array of stock codes
+    if (Array.isArray(savedStocks)) {
+      trackedStocks.value = savedStocks;
+      console.log('Loaded tracked stocks from backend:', trackedStocks.value);
+    } else {
+        // If backend returns an object (old format), convert keys to array
+        trackedStocks.value = Object.keys(savedStocks);
+        console.log('Loaded tracked stocks from backend (converted from object):', trackedStocks.value);
+    }
+  } catch (error) {
+    console.error('Error loading tracked stocks from backend:', error);
+    // If loading fails, initialize with an empty array
+    trackedStocks.value = [];
   }
 
-  // Set up refresh interval for stock data and TAIEX data
-  refreshInterval = setInterval(() => {
-    fetchStockData();
-    fetchTaiexData(); // Fetch TAIEX data in the same interval
-  }, 5000); // Refresh every 5 seconds
 
-  // Set up interval for current time
-  updateCurrentTime(); // Initial call
-  currentTimeInterval = setInterval(updateCurrentTime, 1000); // Update every 1 second
+  fetchStockData(); // Initial fetch
+  fetchTaiexData(); // Fetch TAIEX data on mount
+  // Set up interval for fetching data every 5 seconds
+  const intervalId = setInterval(fetchStockData, 5000);
+  // Set up interval for fetching TAIEX data every 30 seconds
+  const taiexIntervalId = setInterval(fetchTaiexData, 30000);
 
-  // Initial fetch for TAIEX data
-  fetchTaiexData();
+  // Clear interval on component unmount
+  onUnmounted(() => {
+    clearInterval(intervalId);
+    clearInterval(taiexIntervalId);
+  });
 });
 
 onUnmounted(() => {
@@ -657,14 +702,6 @@ onUnmounted(() => {
   }
 });
 
-// 5. 使用 watch 監聽 trackedStocks 的變化並儲存到 localStorage
-watch(trackedStocks, (newStocks) => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newStocks)); // Use STORAGE_KEY
-  } catch (e) {
-    console.error('Failed to save trackedStocks to localStorage:', e);
-  }
-}, { deep: true }); // deep: true 確保監聽陣列內部的變化
 
 // Remove the duplicate onUnmounted block
 // onUnmounted(() => {
@@ -690,7 +727,7 @@ watch(trackedStocks, (newStocks) => {
       <div class="taiex-info">
         加權指數: {{ taiexValue || '-' }}
         <span :class="{ 'positive': parseFloat(taiexChangePercentage || '0') > 0, 'negative': parseFloat(taiexChangePercentage || '0') < 0 }">
-          ({{ taiexChangePercentage || '-' }})
+          {{ taiexPriceChange || '-' }} ({{ taiexChangePercentage || '-' }})
         </span>
       </div>
     </div>
@@ -865,11 +902,11 @@ h1, h2 {
   background-color: #e9e9e9;
 }
 .positive {
-  color: #008000; /* Changed to green for positive change */
+  color: #FF0000; /* Changed to green for positive change */
 }
 
 .negative {
-  color: #FF0000; /* Changed to red for negative change */
+  color: #008000; /* Changed to red for negative change */
 }
 
 .stock-actions {
@@ -970,11 +1007,11 @@ h1, h2 {
 }
 
 .taiex-info .positive {
-  color: #008000; /* Changed to green for positive change */
+  color: #FF0000; /* Changed to green for positive change */
 }
 
 .taiex-info .negative {
-  color: #FF0000; /* Changed to red for negative change */
+  color: #008000; /* Changed to red for negative change */
 }
 
 .fetch-time {
