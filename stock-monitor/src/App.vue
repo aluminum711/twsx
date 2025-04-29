@@ -15,7 +15,9 @@ interface StockData {
   YesterdayClose?: string;
 }
 
-const trackedStocks = ref<string[]>([]); // trackedStocks will now be managed by the backend
+const STORAGE_KEY = 'trackedStocks'; // Define a key for localStorage
+
+const trackedStocks = ref<string[]>([]);
 const stockData = ref<{ [key: string]: StockData }>({});
 const newStockCode = ref('');
 const lastFetchTime = ref<string | null>(null); // 新增響應式屬性來存儲 sysTime
@@ -33,36 +35,393 @@ const stockYearlyData = ref<any>(null); // 新增：用於儲存年度數據
 const isMonthlyDataIncomplete = ref(false); // 新增：追蹤月度數據是否不完整
 let stockChartInstance: Chart | null = null; // 新增：用於儲存圖表實例
 const chartDataType = ref<'monthly' | 'yearly'>('monthly'); // 新增：用於記錄圖表數據類型
-// Script content will go here
-// Function to fetch tracked stocks from backend
-const fetchTrackedStocks = async () => {
+
+// 新增：監聽 chartDataType 的變化
+watch(chartDataType, async (newType, oldType) => {
+  console.log(`chartDataType changed from ${oldType} to ${newType}`);
+  if (newType === 'yearly') {
+    // 如果切換到年度數據，檢查是否已獲取
+    if (!stockYearlyData.value) {
+      console.log('Fetching yearly data...');
+      const stockCode = selectedStockCode.value;
+      if (stockCode) {
+        try {
+          const yearlyResponse = await fetch(`http://localhost:3000/api/stock-yearly/${stockCode}`);
+          if (!yearlyResponse.ok) {
+            throw new Error(`HTTP error! status: ${yearlyResponse.status}`);
+          }
+          const yearlyData = await yearlyResponse.json();
+          console.log(`Fetched yearly data for ${stockCode}:`, yearlyData);
+          stockYearlyData.value = yearlyData; // 儲存獲取到的年度數據
+          console.log('原始年度數據:', stockYearlyData.value); // 新增日誌
+
+          // 新增：對年度數據按照日期進行排序 (由小到大) - 與月度數據排序邏輯相同
+          if (stockYearlyData.value && stockYearlyData.value.data && stockYearlyData.value.fields) {
+            const fields = stockYearlyData.value.fields;
+            const dateIndex = fields.indexOf('日期');
+            if (dateIndex !== -1) {
+              stockYearlyData.value.data.sort((a: string[], b: string[]) => {
+                const dateA = a[dateIndex];
+                const dateB = b[dateIndex];
+
+                // Convert "YYY/MM/DD" (Minguo) to "YYYY/MM/DD" (Gregorian) for correct sorting
+                const convertMinguoToGregorian = (dateStr: string): string => {
+                  const parts = dateStr.split('/');
+                  if (parts.length === 3) {
+                    const year = parseInt(parts[0], 10) + 1911;
+                    // Ensure month and day are zero-padded for correct lexicographical comparison
+                    const month = parts[1].padStart(2, '0');
+                    const day = parts[2].padStart(2, '0');
+                    return `${year}/${month}/${day}`;
+                  }
+                  return dateStr; // Return original if format is unexpected
+                };
+
+                const comparableDateA = convertMinguoToGregorian(dateA);
+                const comparableDateB = convertMinguoToGregorian(dateB);
+
+                if (comparableDateA < comparableDateB) return -1;
+                if (comparableDateA > comparableDateB) return 1;
+                return 0;
+              });
+              console.log('排序後的年度數據:', stockYearlyData.value.data); // 新增日誌
+            } else {
+              console.error('Date field not found in yearly data fields for sorting.');
+            }
+          }
+          // End of new sorting logic
+
+        } catch (error) {
+          console.error(`Error fetching stock yearly data for ${stockCode}:`, error);
+          stockYearlyData.value = null; // 清除數據或設置錯誤狀態
+        }
+      }
+    }
+  }
+
+  // 無論切換到月度或年度，只要數據準備好，就重新渲染圖表
+  // 確保在 DOM 更新後渲染圖表
+  await nextTick();
+  renderChart();
+});
+
+const showChartModal = async (stockCode: string) => { // 修改：增加 async
+  selectedStockCode.value = stockCode;
+  // Find the stock name based on the code
+  const stock = Object.values(stockData.value).find(s => s.Code === stockCode);
+  selectedStockName.value = stock ? stock.Name : stockCode; // Use name if found, otherwise use code
+
+  // 新增：呼叫後端 API 獲取歷史數據
   try {
-    const response = await fetch('http://localhost:3000/api/tracked-stocks');
+    const response = await fetch(`${backendApiUrl}/stock-history/${stockCode}`);
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    const trackedStocksData = await response.json();
-    trackedStocks.value = trackedStocksData;
-    console.log('Fetched tracked stocks from backend:', trackedStocks.value);
+    const historyData = await response.json();
+    console.log(`Fetched history data for ${stockCode}:`, historyData);
+    stockChartData.value = historyData; // 儲存獲取到的數據
+
+    // 新增：在數據獲取後渲染圖表
+    // await nextTick(); // 確保 DOM 更新 - Moved renderChart call
+    // renderChart(); // Moved renderChart call
+
   } catch (error) {
-    console.error('Error fetching tracked stocks:', error);
-    // Handle error, maybe set trackedStocks to empty array or show an error message
-    trackedStocks.value = [];
+    console.error(`Error fetching stock history for ${stockCode}:`, error);
+    stockChartData.value = null; // 清除數據或設置錯誤狀態
+  }
+
+  // 新增：呼叫後端 API 獲取月度數據
+  try {
+    const monthlyResponse = await fetch(`http://localhost:3000/api/stock-monthly/${stockCode}`);
+    if (!monthlyResponse.ok) {
+      throw new Error(`HTTP error! status: ${monthlyResponse.status}`);
+    }
+    const monthlyData = await monthlyResponse.json();
+    console.log(`Fetched monthly data for ${stockCode}:`, monthlyData);
+    stockMonthlyData.value = monthlyData; // 儲存獲取到的月度數據
+    console.log('原始月度數據:', stockMonthlyData.value); // 新增日誌
+    
+        // 新增：對月度數據按照日期進行排序 (由小到大)
+        if (stockMonthlyData.value && stockMonthlyData.value.data && stockMonthlyData.value.fields) {
+          const fields = stockMonthlyData.value.fields;
+          const dateIndex = fields.indexOf('日期');
+          if (dateIndex !== -1) {
+            stockMonthlyData.value.data.sort((a: string[], b: string[]) => {
+              const dateA = a[dateIndex];
+              const dateB = b[dateIndex];
+
+              // Convert "YYY/MM/DD" (Minguo) to "YYYY/MM/DD" (Gregorian) for correct sorting
+              const convertMinguoToGregorian = (dateStr: string): string => {
+                const parts = dateStr.split('/');
+                if (parts.length === 3) {
+                  const year = parseInt(parts[0], 10) + 1911;
+                  // Ensure month and day are zero-padded for correct lexicographical comparison
+                  const month = parts[1].padStart(2, '0');
+                  const day = parts[2].padStart(2, '0');
+                  return `${year}/${month}/${day}`;
+                }
+                return dateStr; // Return original if format is unexpected
+              };
+
+              const comparableDateA = convertMinguoToGregorian(dateA);
+              const comparableDateB = convertMinguoToGregorian(dateB);
+
+              if (comparableDateA < comparableDateB) return -1;
+              if (comparableDateA > comparableDateB) return 1;
+              return 0;
+            });
+            console.log('排序後的月度數據:', stockMonthlyData.value.data); // 新增日誌
+          } else {
+            console.error('Date field not found in monthly data fields for sorting.');
+          }
+        }
+        // End of new sorting logic
+    
+        // 檢查月度數據完整性
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = today.getMonth(); // 0-indexed
+    const lastDayOfMonth = new Date(year, month + 1, 0).getDate(); // Get number of days in current month
+
+    // 簡單判斷：如果獲取到的數據量少於當月天數，則認為數據可能不完整
+    // 注意：這是一個簡化的判斷，實際情況可能需要更複雜的邏輯（例如考慮假日）
+    if (stockMonthlyData.value && stockMonthlyData.value.length < lastDayOfMonth) {
+      isMonthlyDataIncomplete.value = true;
+    } else {
+      isMonthlyDataIncomplete.value = false;
+    }
+
+
+    // 新增：在月度數據獲取後渲染圖表
+  } catch (error) {
+    console.error(`Error fetching stock monthly data for ${stockCode}:`, error);
+    stockMonthlyData.value = null; // 清除數據或設置錯誤狀態
+    isMonthlyDataIncomplete.value = false; // Reset incomplete status on error
+  }
+
+  isChartModalVisible.value = true;
+  await nextTick(); // 確保 DOM 更新
+  renderChart();
+};
+
+const hideChartModal = () => {
+  isChartModalVisible.value = false;
+  selectedStockCode.value = null;
+  selectedStockName.value = null;
+  stockChartData.value = null; // 清除圖表數據
+  // 新增：銷毀圖表實例
+  if (stockChartInstance) {
+    stockChartInstance.destroy();
+    stockChartInstance = null;
   }
 };
+
+// 新增：渲染圖表的函式
+const renderChart = () => {
+  const ctx = document.getElementById('stock-daily-change-chart') as HTMLCanvasElement;
+
+  // Determine which data source to use based on chartDataType
+  const chartData = chartDataType.value === 'yearly' ? stockYearlyData.value : stockMonthlyData.value;
+  const dataTypeLabel = chartDataType.value === 'yearly' ? '年度' : '月度';
+
+  // Check if canvas and selected data source with fields and data properties exist
+  if (!ctx || !chartData || !chartData.fields || !chartData.data) {
+    console.error(`Chart canvas not found or ${dataTypeLabel} data not available or in unexpected format.`);
+    return;
+  }
+
+  // Destroy existing chart instance
+  if (stockChartInstance) {
+    stockChartInstance.destroy();
+  }
+
+  // Prepare chart data from raw API response
+  const fields = chartData.fields;
+  const rawData = chartData.data;
+
+  // Find indices for required fields
+  const dateIndex = fields.indexOf('日期');
+  const closingPriceIndex = fields.indexOf('收盤價');
+  const priceChangeIndex = fields.indexOf('漲跌價差'); // Or '漲跌' depending on the exact field name
+
+  // Validate indices
+  if (dateIndex === -1 || closingPriceIndex === -1 || priceChangeIndex === -1) {
+    console.error('Required fields (日期, 收盤價, 漲跌價差) not found in monthly data fields.');
+    // Optionally display an error message to the user
+    return;
+  }
+
+const labels: string[] = [];
+  const percentageChangeData: number[] = [];
+  const closingPriceData: number[] = []; // 新增：用於儲存收盤價數據
+
+  // Process raw data to extract date, calculate daily percentage change, and extract closing price
+  rawData.forEach((dayData: string[]) => {
+    const date = dayData[dateIndex];
+    const closingPriceStr = dayData[closingPriceIndex];
+    const priceChangeStr = dayData[priceChangeIndex];
+
+    const closingPrice = parseFloat(closingPriceStr);
+    // The price change field might contain symbols like '+' or '-'
+    // Need to parse it carefully. Assuming it's a number string after potential symbols.
+    const priceChange = parseFloat(priceChangeStr.replace('+', '').replace('-', ''));
+
+    // Determine the sign of the price change
+    const actualPriceChange = priceChangeStr.includes('-') ? -priceChange : priceChange;
+
+    // Calculate percentage change: (Price Change / Yesterday's Closing Price) * 100
+    // Yesterday's Closing Price = Today's Closing Price - Today's Price Change
+    const yesterdayClose = closingPrice - actualPriceChange;
+
+    let percentageChange = 0;
+    if (yesterdayClose !== 0) {
+      percentageChange = (actualPriceChange / yesterdayClose) * 100;
+    }
+
+    // Format date if needed (e.g., remove year or change format)
+    // The date format from the API is typically "YYYY/MM/DD"
+    // Let's use "MM/DD" for chart labels
+    const formattedDate = date.substring(5); // Keep MM/DD
+
+    labels.push(formattedDate);
+    percentageChangeData.push(parseFloat(percentageChange.toFixed(2))); // Store percentage change, rounded to 2 decimal places
+    closingPriceData.push(closingPrice); // 新增：儲存收盤價
+  });
+
+  console.log('傳入 renderChart 的數據:', { labels, percentageChangeData, closingPriceData }); // 更新日誌
+
+
+  // Calculate min/max for closing price data with 10% padding
+  let priceMin = 0; // Default if no data
+  let priceMax = 100; // Default if no data
+  if (closingPriceData.length > 0) {
+    const minPrice = Math.min(...closingPriceData);
+    const maxPrice = Math.max(...closingPriceData);
+    const priceRange = maxPrice - minPrice;
+    priceMin = minPrice - priceRange * 0.1;
+    priceMax = maxPrice + priceRange * 0.1;
+  }
+
+  // Reverse the data and labels to show oldest data first on the chart
+
+
+  stockChartInstance = new Chart(ctx, {
+    type: 'line', // or 'bar'
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: `${selectedStockName.value} 月度漲跌幅 (%)`,
+          data: percentageChangeData, // 使用漲跌幅數據
+          borderColor: '#007bff',
+          tension: 0.1,
+          fill: false,
+          yAxisID: 'y-percentage', // 指定使用漲跌幅的 Y 軸
+        },
+        {
+          label: `${selectedStockName.value} 收盤價`, // 新增：收盤價數據集標籤
+          data: closingPriceData, // 新增：使用收盤價數據
+          borderColor: '#ff7f0e', // 新增：收盤價趨勢線顏色
+          tension: 0.1,
+          fill: false,
+          yAxisID: 'y-price', // 新增：指定使用收盤價的 Y 軸
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false, // Allow manual size setting
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: '日期'
+          }
+        },
+        'y-percentage': { // 漲跌幅的 Y 軸
+          type: 'linear',
+          position: 'left',
+          title: {
+            display: true,
+            text: '漲跌幅 (%)'
+          },
+          min: -10, // Fixed min to -10%
+          max: 10, // Fixed max to 10%
+          ticks: { // Add ticks configuration
+            stepSize: 1 // Set step size to 1 for percentage points
+          }
+        },
+        'y-price': { // 新增：收盤價的 Y 軸
+          type: 'linear',
+          position: 'right', // 放在右側
+          title: {
+            display: true,
+            text: '收盤價'
+          },
+          grid: {
+            drawOnChartArea: false, // 不在圖表區域繪製網格線，避免與左側 Y 軸重疊
+          },
+          min: priceMin, // Add calculated min
+          max: priceMax, // Add calculated max
+        }
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              let label = context.dataset.label ? context.dataset.label : ''; // 檢查 label 是否存在
+              if (label) {
+                label += ': ';
+              }
+              if (context.parsed.y !== null) {
+                // 根據數據集判斷格式
+                if (label.includes('漲跌幅')) { // 使用檢查後的 label
+                  label += context.parsed.y.toFixed(2) + '%';
+                } else {
+                  label += context.parsed.y.toFixed(2); // 收盤價不需要百分比符號
+                }
+              }
+              return label;
+            }
+          }
+        }
+      }
+    }
+  });
+};
+
+
 // const apiUrl = '/api/v1/exchangeReport/STOCK_DAY_ALL'; // Old API
 const backendApiUrl = 'http://localhost:3000/api/stock-data'; // New backend API
 const taiexApiUrl = 'http://localhost:3000/api/taiex-data'; // New TAIEX API
 
 const fetchStockData = async () => {
-  // Fetch stock data for all tracked stocks from the backend
+  // Load tracked stocks from localStorage on initial fetch if not already loaded
+  // This part is now handled in onMounted, so we can remove it here.
+  // if (trackedStocks.value.length === 0) {
+  //   const savedStocks = localStorage.getItem(STORAGE_KEY);
+  //   if (savedStocks) {
+  //     try {
+  //       trackedStocks.value = JSON.parse(savedStocks);
+  //       console.log('Loaded tracked stocks from localStorage:', trackedStocks.value);
+  //     } catch (e) {
+  //       console.error('Error parsing saved stocks from localStorage:', e);
+  //       localStorage.removeItem(STORAGE_KEY); // Clear invalid data
+  //     }
+  //   }
+  // }
+
+  if (trackedStocks.value.length === 0) {
+    stockData.value = {}; // Clear data if no stocks are tracked
+    return;
+  }
   try {
     const response = await fetch(backendApiUrl, {
-      method: 'POST', // Still using POST as per backend endpoint
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ stockCodes: trackedStocks.value }), // Send current tracked stocks from frontend state
+      body: JSON.stringify({ stockCodes: trackedStocks.value }),
     });
 
     if (!response.ok) {
@@ -88,28 +447,25 @@ const fetchStockData = async () => {
       const seconds = now.getSeconds().toString().padStart(2, '0');
       currentTime.value = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
 
-    const currentHours = now.getHours();
-    const currentMinutes = now.getMinutes();
-    // Check if current time is between 8:30 and 14:00 (exclusive of 14:00)
-    const isTradingHours = (currentHours > 8 || (currentHours === 8 && currentMinutes >= 30)) && currentHours < 14;
-
     for (const code in apiResponse.stockData) {
-        // Check if the stock code is still in our tracked list (important after removing stocks)
         if (trackedStocks.value.includes(code)) {
           const item = apiResponse.stockData[code];
+          const hours = now.getHours();
+          const minutes = now.getMinutes();
+          // Check if current time is between 8:30 and 14:00 (exclusive of 14:00)
+          const isTradingHours = (hours > 8 || (hours === 8 && minutes >= 30)) && hours < 14;
 
-          // Apply conditional update based on trading hours and 'N/A' values
-          const currentStock = stockData.value[code];
           processedData[code] = {
             Code: item.Code,
             Name: item.Name,
-            t: item.t,
+            t: item.t, // Use item.t for 't'
             v: item.v,
-            // Conditionally update InstantPrice, PriceChange, ChangePercentage during trading hours if not 'N/A'
-            z: (isTradingHours && item.InstantPrice === 'N/A' && currentStock?.z !== undefined) ? currentStock.z : item.InstantPrice,
-            InstantPrice: (isTradingHours && item.InstantPrice === 'N/A' && currentStock?.InstantPrice !== undefined) ? currentStock.InstantPrice : item.InstantPrice,
-            PriceChange: (isTradingHours && item.PriceChange === 'N/A' && currentStock?.PriceChange !== undefined) ? currentStock.PriceChange : item.PriceChange,
-            ChangePercentage: (isTradingHours && item.ChangePercentage === 'N/A' && currentStock?.ChangePercentage !== undefined) ? currentStock.ChangePercentage : item.ChangePercentage,
+            // Apply conditional update for z, InstantPrice, PriceChange, ChangePercentage
+            // If within trading hours and new data is 'N/A', keep existing data if available
+            z: (isTradingHours && item.InstantPrice === 'N/A' && stockData.value[code]?.z !== undefined) ? stockData.value[code].z : item.InstantPrice,
+            InstantPrice: (isTradingHours && item.InstantPrice === 'N/A' && stockData.value[code]?.InstantPrice !== undefined) ? stockData.value[code].InstantPrice : item.InstantPrice,
+            PriceChange: (isTradingHours && item.PriceChange === 'N/A' && stockData.value[code]?.PriceChange !== undefined) ? stockData.value[code].PriceChange : item.PriceChange,
+            ChangePercentage: (isTradingHours && item.ChangePercentage === 'N/A' && stockData.value[code]?.ChangePercentage !== undefined) ? stockData.value[code].ChangePercentage : item.ChangePercentage,
             YesterdayClose: item.YesterdayClose, // Assuming YesterdayClose is not N/A during trading hours
           };
         }
@@ -119,30 +475,101 @@ const fetchStockData = async () => {
     stockData.value = processedData;
     console.log('Updated stockData:', stockData.value);
 
-  } catch (error: any) { // Explicitly type error as any
+  } catch (error) {
     console.error('Error fetching stock data:', error);
     // Optionally clear stockData or mark stocks as errored
     // stockData.value = {}; // Keep existing data on error
   }
 };
 
-// Function to fetch TAIEX data
+// Watch for changes in trackedStocks and save to localStorage
+// This block is already present and correct, no need to re-add.
+// watch(trackedStocks, (newStocks) => {
+//   localStorage.setItem(STORAGE_KEY, JSON.stringify(newStocks));
+//   console.log('Saved tracked stocks to localStorage:', newStocks);
+// }, { deep: true });
+
+// Function to add a stock
+// This function is already present, will modify it in the next diff.
+// const addStock = () => {
+//   const code = newStockCode.value.trim().toUpperCase();
+//   if (code && !trackedStocks.value.includes(code)) {
+//     trackedStocks.value.push(code);
+//     newStockCode.value = ''; // Clear input field
+//     fetchStockData(); // Fetch data for the newly added stock
+//   }
+// };
+
+// Function to remove a stock
+// This function is already present, will modify it in the next diff.
+// const removeStock = (stockCode: string) => {
+//   trackedStocks.value = trackedStocks.value.filter(code => code !== stockCode);
+//   // Optionally remove the stock's data from stockData as well
+//   if (stockData.value[stockCode]) {
+//     delete stockData.value[stockCode];
+//   }
+//   fetchStockData(); // Refresh data for remaining stocks
+// };
+
+// Load tracked stocks from localStorage when the component is mounted
+// This block is already present and correct, no need to re-add.
+// onMounted(() => {
+//   const savedStocks = localStorage.getItem(STORAGE_KEY);
+//   if (savedStocks) {
+//     try {
+//       trackedStocks.value = JSON.parse(savedStocks);
+//       console.log('Loaded tracked stocks from localStorage on mount:', trackedStocks.value);
+//     } catch (e) {
+//       console.error('Error parsing saved stocks from localStorage on mount:', e);
+//       localStorage.removeItem(STORAGE_KEY); // Clear invalid data
+//     }
+//   }
+//   // Initial data fetch after loading from storage
+//   fetchStockData();
+//   fetchTaiexData(); // Fetch TAIEX data on mount
+// });
+
+// Auto-fetch data every 30 seconds
+// This block is already present and correct, no need to re-add.
+// let fetchInterval: number | null = null;
+// onMounted(() => {
+//   fetchInterval = setInterval(() => {
+//     fetchStockData();
+//     fetchTaiexData(); // Also fetch TAIEX data periodically
+//   }, 30000); // Fetch every 30 seconds
+// });
+
+// onUnmounted(() => {
+//   if (fetchInterval) {
+//     clearInterval(fetchInterval);
+//   }
+// });
+
 const fetchTaiexData = async () => {
   try {
-    const response = await fetch(taiexApiUrl);
+    // Change to taiexApiUrl and use GET method
+    const response = await fetch(taiexApiUrl, {
+      method: 'GET',
+      // Remove headers and body for GET request
+    });
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
+
     const apiResponse = await response.json();
     console.log('Received TAIEX data from backend:', apiResponse);
 
+    // Adjust data extraction based on the new endpoint's response structure
     if (apiResponse && apiResponse.taiexData) {
       const taiexData = apiResponse.taiexData;
       taiexValue.value = taiexData.Value || null; // Extract Value
       taiexChangePercentage.value = taiexData.ChangePercentage || null; // Extract ChangePercentage
     } else {
+      // Handle case where data is not found or in unexpected format
       taiexValue.value = null;
       taiexChangePercentage.value = null;
+      console.warn('TAIEX data not found or in unexpected format:', apiResponse);
     }
 
   } catch (error) {
@@ -152,7 +579,25 @@ const fetchTaiexData = async () => {
   }
 };
 
-// Function to update current time display
+const addStock = () => {
+  const code = newStockCode.value.trim().toUpperCase(); // Convert to uppercase
+  if (code && !trackedStocks.value.includes(code)) {
+    trackedStocks.value.push(code);
+    newStockCode.value = ''; // Clear input
+    // fetchStockData(); // No need to call here, watch will trigger fetch via interval
+  }
+};
+
+const removeStock = (stockCode: string) => {
+  trackedStocks.value = trackedStocks.value.filter(code => code !== stockCode);
+  // Optionally remove the stock's data from stockData as well
+  if (stockData.value[stockCode]) {
+    delete stockData.value[stockCode];
+  }
+  // No need to call fetchStockData here, watch will trigger fetch via interval
+};
+
+// Function to update current time
 const updateCurrentTime = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -161,38 +606,46 @@ const updateCurrentTime = () => {
   const hours = now.getHours().toString().padStart(2, '0');
   const minutes = now.getMinutes().toString().padStart(2, '0');
   const seconds = now.getSeconds().toString().padStart(2, '0');
-  currentTime.value = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+  currentTime.value = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 };
-// Fetch data on component mount
-onMounted(async () => {
-  console.log('Component mounted. Fetching initial data...');
-  await fetchTrackedStocks(); // Fetch tracked stocks first
-  fetchStockData(); // Then fetch data for those stocks
-  fetchTaiexData(); // Fetch TAIEX data
 
-  // Set up interval to fetch data periodically (e.g., every 5 seconds)
-  const fetchInterval = setInterval(() => {
-    console.log('Fetching data...');
-    fetchStockData();
-    fetchTaiexData();
-  }, 5000); // Fetch every 5 seconds
-
-  // Set up interval to update current time every second
-  const timeInterval = setInterval(updateCurrentTime, 1000);
-
-  // Clear intervals on component unmount
-  onUnmounted(() => {
-    clearInterval(fetchInterval);
-    clearInterval(timeInterval);
-  });
-
-  // Initial call to display current time immediately
-  updateCurrentTime();
-});
-
-// Auto-fetch data every 5 seconds (changed from 30 seconds)
+// Initial fetch and set up refresh interval
 let refreshInterval: number | null = null;
 let currentTimeInterval: number | null = null; // 新增定時器變數
+
+
+onMounted(() => {
+  // 1. 從 localStorage 讀取追蹤個股列表
+  const savedStocks = localStorage.getItem(STORAGE_KEY); // Use STORAGE_KEY
+  if (savedStocks) {
+    try {
+      const parsedStocks = JSON.parse(savedStocks);
+      // 確保讀取到的是一個陣列
+      if (Array.isArray(parsedStocks)) {
+        trackedStocks.value = parsedStocks;
+        // 讀取後立即獲取數據
+        fetchStockData();
+      } else {
+        console.error('LocalStorage data for trackedStocks is not an array.');
+      }
+    } catch (e) {
+      console.error('Failed to parse localStorage data for trackedStocks:', e);
+    }
+  }
+
+  // Set up refresh interval for stock data and TAIEX data
+  refreshInterval = setInterval(() => {
+    fetchStockData();
+    fetchTaiexData(); // Fetch TAIEX data in the same interval
+  }, 5000); // Refresh every 5 seconds
+
+  // Set up interval for current time
+  updateCurrentTime(); // Initial call
+  currentTimeInterval = setInterval(updateCurrentTime, 1000); // Update every 1 second
+
+  // Initial fetch for TAIEX data
+  fetchTaiexData();
+});
 
 onUnmounted(() => {
   // Clear intervals when component is unmounted
@@ -203,285 +656,134 @@ onUnmounted(() => {
     clearInterval(currentTimeInterval);
   }
 });
-// Function to open the chart modal and fetch data
-const openChartModal = async (stockCode: string, stockName: string) => {
-  selectedStockCode.value = stockCode;
-  selectedStockName.value = stockName;
-  isChartModalVisible.value = true;
-  chartDataType.value = 'monthly'; // Default to monthly when opening
-  await nextTick(); // Wait for the modal to be rendered
-  fetchStockChartData(stockCode, chartDataType.value);
-};
 
-// Function to close the chart modal
-const closeChartModal = () => {
-  isChartModalVisible.value = false;
-  selectedStockCode.value = null;
-  selectedStockName.value = null;
-  destroyChart(); // Destroy chart instance when closing modal
-};
-
-// Function to fetch stock chart data
-const fetchStockChartData = async (stockCode: string, type: 'monthly' | 'yearly') => {
+// 5. 使用 watch 監聽 trackedStocks 的變化並儲存到 localStorage
+watch(trackedStocks, (newStocks) => {
   try {
-    const endpoint = type === 'monthly' ? 'monthly-data' : 'yearly-data';
-    const response = await fetch(`http://localhost:3000/api/stock-history/${stockCode}/${endpoint}`);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const apiResponse = await response.json();
-    console.log(`Received ${type} data for ${stockCode}:`, apiResponse);
-
-    if (type === 'monthly') {
-      stockMonthlyData.value = apiResponse.data;
-      isMonthlyDataIncomplete.value = apiResponse.incomplete || false; // Update incomplete status
-      renderChart(stockMonthlyData.value, 'stockChartMonthly', type);
-    } else {
-      stockYearlyData.value = apiResponse.data;
-      renderChart(stockYearlyData.value, 'stockChartYearly', type);
-    }
-
-  } catch (error) {
-    console.error(`Error fetching ${type} chart data for ${stockCode}:`, error);
-    if (type === 'monthly') {
-      stockMonthlyData.value = null;
-      isMonthlyDataIncomplete.value = true; // Assume incomplete on error
-      renderChart([], 'stockChartMonthly', type); // Render empty chart on error
-    } else {
-      stockYearlyData.value = null;
-      renderChart([], 'stockChartYearly', type); // Render empty chart on error
-    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newStocks)); // Use STORAGE_KEY
+  } catch (e) {
+    console.error('Failed to save trackedStocks to localStorage:', e);
   }
-};
+}, { deep: true }); // deep: true 確保監聽陣列內部的變化
 
-// Function to render the chart
-const renderChart = (data: any[], elementId: string, type: 'monthly' | 'yearly') => {
-  destroyChart(); // Destroy existing chart before rendering a new one
-
-  const ctx = document.getElementById(elementId) as HTMLCanvasElement;
-  if (!ctx) {
-    console.error(`Canvas element with id ${elementId} not found.`);
-    return;
-  }
-
-  // Prepare data for Chart.js
-  const labels = data.map(item => item.Date);
-  const prices = data.map(item => parseFloat(item.Close));
-
-  stockChartInstance = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: `${selectedStockName.value} (${selectedStockCode.value}) - ${type === 'monthly' ? '月線' : '年線'}`,
-        data: prices,
-        borderColor: 'rgb(75, 192, 192)',
-        tension: 0.1,
-        pointRadius: 2, // Reduce point size
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false, // Allow chart to fill modal width
-      scales: {
-        x: {
-          title: {
-            display: true,
-            text: '日期'
-          }
-        },
-        y: {
-          title: {
-            display: true,
-            text: '收盤價'
-          }
-        }
-      },
-      plugins: {
-        tooltip: {
-          callbacks: {
-            title: function(context) {
-              // Display date in tooltip title
-              return context[0].label;
-            },
-            label: function(context) {
-              // Display price in tooltip label
-              return `收盤價: ${context.raw}`;
-            }
-          }
-        }
-      }
-    }
-  });
-};
-
-// Function to destroy the chart instance
-const destroyChart = () => {
-  if (stockChartInstance) {
-    stockChartInstance.destroy();
-    stockChartInstance = null;
-  }
-};
-
-// Watch for changes in chartDataType and fetch/render the appropriate data
-watch(chartDataType, (newType) => {
-  if (selectedStockCode.value) {
-    fetchStockChartData(selectedStockCode.value, newType);
-  }
-});
-
-// Function to add a stock
-const addStock = async () => { // Make async to await backend call
-  const code = newStockCode.value.trim().toUpperCase(); // Convert to uppercase
-  if (code) { // No need to check if already tracked on frontend
-    try {
-      const response = await fetch('http://localhost:3000/api/tracked-stocks', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ stockCode: code }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Failed to add stock: ${errorData.error || response.statusText}`);
-      }
-
-      console.log(`Stock ${code} added successfully to backend.`);
-      newStockCode.value = ''; // Clear input
-      // After adding, fetch the updated list of tracked stocks from the backend
-      await fetchTrackedStocks();
-      fetchStockData(); // Fetch updated data including the new stock
-    } catch (error: any) { // Explicitly type error as any
-      console.error(`Error adding stock ${code}:`, error);
-      alert(`Failed to add stock: ${error.message}`); // Provide user feedback
-    }
-  }
-};
-
-// Function to remove a stock
-const removeStock = async (stockCode: string) => { // Make async to await backend call
-  try {
-    const response = await fetch(`http://localhost:3000/api/tracked-stocks/${stockCode}`, {
-      method: 'DELETE',
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Failed to remove stock: ${errorData.error || response.statusText}`);
-    }
-
-    console.log(`Stock ${stockCode} removed successfully from backend.`);
-    // Remove the stock from the frontend list and data
-    trackedStocks.value = trackedStocks.value.filter(code => code !== stockCode);
-    if (stockData.value[stockCode]) {
-      delete stockData.value[stockCode];
-    }
-    fetchStockData(); // Fetch updated data for remaining stocks
-  } catch (error: any) { // Explicitly type error as any
-    console.error(`Error removing stock ${stockCode}:`, error);
-    alert(`Failed to remove stock: ${error.message}`); // Provide user feedback
-  }
-};
+// Remove the duplicate onUnmounted block
+// onUnmounted(() => {
+//   // Clear intervals when component is unmounted
+//   if (refreshInterval !== null) {
+//     clearInterval(refreshInterval);
+//   }
+//   if (currentTimeInterval !== null) { // Clear the new interval
+//     clearInterval(currentTimeInterval);
+//   }
+// });
 </script>
 
 <template>
-  <div id="app">
-    <h1>股票即時監控</h1>
+  <div class="container">
+    <h1>台灣上市個股成交資訊</h1>
 
-    <div class="info-bar">
-      <div class="time-info">
-        <p>當前系統時間: {{ currentTime }}</p>
+    <div class="header-info">
+      <div class="current-time">
+        當前系統時間：{{ currentTime }}
       </div>
+    
       <div class="taiex-info">
-        <p>
-          TAIEX:
-          <span :class="{
-            'positive': parseFloat(taiexChangePercentage || '0') > 0,
-            'negative': parseFloat(taiexChangePercentage || '0') < 0
-          }">
-            {{ taiexValue || 'N/A' }} ({{ taiexChangePercentage || 'N/A' }})%
-          </span>
-        </p>
+        加權指數: {{ taiexValue || '-' }}
+        <span :class="{ 'positive': parseFloat(taiexChangePercentage || '0') > 0, 'negative': parseFloat(taiexChangePercentage || '0') < 0 }">
+          ({{ taiexChangePercentage || '-' }})
+        </span>
       </div>
     </div>
 
     <div class="input-area">
-      <input v-model="newStockCode" @keyup.enter="addStock" placeholder="輸入股票代碼 (e.g., 2330)" />
-      <button @click="addStock">加入股票</button>
+      <input
+        type="text"
+        v-model="newStockCode"
+        placeholder="輸入個股代碼 (例如: 2330)"
+        @keyup.enter="addStock"
+      />
+      <button @click="addStock">新增個股</button>
     </div>
 
-    <div v-if="trackedStocks.length > 0" class="stock-list">
-      <h2>追蹤中的股票</h2>
+
+    <div v-if="lastFetchTime" class="fetch-time">
+      最新資料獲取時間：{{ lastFetchTime }}
+    </div>
+
+    <div class="stock-list">
       <table>
         <thead>
           <tr>
-            <th>代碼</th>
-            <th>名稱</th>
-            <th>成交價</th>
+            <th>股票代碼</th>
+            <th>股票名稱</th>
+            <th>漲跌幅</th>
             <th>漲跌</th>
-            <th>漲跌幅 (%)</th>
+            <th>現價</th>
             <th>昨日收盤價</th>
-            <th>最後更新時間</th>
+            <th>成交量</th>
+            <th>最新資料時間</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="stockCode in trackedStocks" :key="stockCode">
-            <td>{{ stockCode }}</td>
-            <td>{{ stockData[stockCode]?.Name || '載入中...' }}</td>
-            <td :class="{
-              'positive': parseFloat(stockData[stockCode]?.PriceChange || '0') > 0,
-              'negative': parseFloat(stockData[stockCode]?.PriceChange || '0') < 0
-            }">
-              {{ stockData[stockCode]?.InstantPrice || 'N/A' }}
-            </td>
-            <td :class="{
-              'positive': parseFloat(stockData[stockCode]?.PriceChange || '0') > 0,
-              'negative': parseFloat(stockData[stockCode]?.PriceChange || '0') < 0
-            }">
-              {{ stockData[stockCode]?.PriceChange || 'N/A' }}
-            </td>
-            <td :class="{
-              'positive': parseFloat(stockData[stockCode]?.ChangePercentage || '0') > 0,
-              'negative': parseFloat(stockData[stockCode]?.ChangePercentage || '0') < 0
-            }">
-              {{ stockData[stockCode]?.ChangePercentage || 'N/A' }}
-            </td>
-            <td>{{ stockData[stockCode]?.YesterdayClose || 'N/A' }}</td>
-            <td>{{ stockData[stockCode]?.t || 'N/A' }}</td>
-            <td>
-              <button @click="openChartModal(stockCode, stockData[stockCode]?.Name || stockCode)">查看圖表</button>
-              <button @click="removeStock(stockCode)">移除</button>
-            </td>
+          <tr v-for="code in trackedStocks" :key="code">
+            <template v-if="stockData[code]">
+              <td>{{ stockData[code].Code }}</td>
+              <td>{{ stockData[code].Name }}</td>
+              <td :class="{ 'positive': parseFloat(stockData[code].ChangePercentage || '') > 0, 'negative': parseFloat(stockData[code].ChangePercentage || '') < 0 }">{{ stockData[code].ChangePercentage || '-' }}</td> <!-- Display Change Percentage -->
+              <td :class="{ 'positive': parseFloat(stockData[code].PriceChange || '') > 0, 'negative': parseFloat(stockData[code].PriceChange || '') < 0 }">{{ stockData[code].PriceChange || '-' }}</td> <!-- Display Price Change -->
+              <td>{{ stockData[code].z || '-' }}</td> <!-- Display current price (z) -->
+              <td>{{ stockData[code].YesterdayClose || '-' }}</td> <!-- Display Yesterday Close -->
+              <td>{{ stockData[code].v || '-' }}</td> <!-- Display Trade Volume (v) -->
+              <td>{{ stockData[code].t || '-' }}</td> <!-- Display latest data time (t) -->
+              <td class="stock-actions">
+                <button @click="showChartModal(stockData[code].Code)">顯示圖表</button>
+                <button @click="removeStock(code)">刪除</button>
+              </td>
+            </template>
+            <template v-else>
+              <td colspan="9" style="text-align: center;">載入 {{ code }} 資料中...</td> <!-- Adjusted colspan -->
+            </template>
+          </tr>
+          <tr v-if="trackedStocks.length === 0">
+            <td colspan="9" style="text-align: center;">請輸入個股代碼以開始追蹤</td> <!-- Adjusted colspan -->
           </tr>
         </tbody>
       </table>
     </div>
-    <div v-else>
-      <p>請輸入股票代碼以開始追蹤。</p>
-    </div>
+  </div>
 
-    <!-- Chart Modal -->
-    <div v-if="isChartModalVisible" class="modal-overlay" @click.self="closeChartModal">
-      <div class="modal-content">
-        <span class="close" @click="closeChartModal">&times;</span>
-        <h2>{{ selectedStockName }} ({{ selectedStockCode }}) - 歷史股價圖</h2>
-
-        <div class="chart-controls">
-          <button @click="chartDataType = 'monthly'" :class="{ active: chartDataType === 'monthly' }">月線</button>
-          <button @click="chartDataType = 'yearly'" :class="{ active: chartDataType === 'yearly' }">年線</button>
+  <!-- Chart Modal -->
+  <div v-if="isChartModalVisible" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>{{ selectedStockName }} 當月漲跌幅圖表</h2>
+        <button class="close-button" @click="hideChartModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- Chart will be rendered here -->
+        <div id="stock-chart" style="height: 450px;">
+          <!-- 圖表將在這裡顯示 -->
+          <canvas id="stock-daily-change-chart"></canvas>
+          <p v-if="!stockMonthlyData && chartDataType === 'monthly'">正在載入月度圖表數據...</p> <!-- 修改：檢查 stockMonthlyData -->
+          <!-- Add loading/error state for yearly data if needed -->
+          <p v-if="isMonthlyDataIncomplete && chartDataType === 'monthly'" style="color: orange; text-align: center; margin-top: 10px;">注意：獲取到的月度數據可能不完整。</p>
         </div>
 
-        <div v-if="chartDataType === 'monthly'">
-          <p v-if="isMonthlyDataIncomplete" class="warning-message">
-            注意：月線數據可能不完整，僅顯示最近的可用數據。
-          </p>
-          <canvas id="stockChartMonthly"></canvas>
-        </div>
-        <div v-if="chartDataType === 'yearly'">
-          <canvas id="stockChartYearly"></canvas>
+        <!-- Data Type Switch Buttons -->
+        <div class="chart-data-switch">
+          <button
+            :class="{ active: chartDataType === 'monthly' }"
+            @click="chartDataType = 'monthly'"
+          >
+            月度數據
+          </button>
+          <button
+            :class="{ active: chartDataType === 'yearly' }"
+            @click="chartDataType = 'yearly'"
+          >
+            年度數據
+          </button>
         </div>
 
       </div>
@@ -490,5 +792,206 @@ const removeStock = async (stockCode: string) => { // Make async to await backen
 </template>
 
 <style scoped>
-/* Style content will go here */
+.container {
+  background-color: #f8f8f8; /* Added light grey background */
+  margin: 0 auto;
+  padding: 20px;
+  font-family: sans-serif;
+}
+
+.header-info {
+  margin-bottom: 20px; /* Add some space below this block */
+}
+
+h1, h2 {
+  text-align: center;
+  color: #333;
+}
+
+.input-area {
+  display: flex;
+  margin-bottom: 20px;
+  gap: 10px;
+}
+
+.input-area input {
+  flex-grow: 1;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.input-area button {
+  padding: 10px 15px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.input-area button:hover {
+  background-color: #0056b3;
+}
+
+.stock-list {
+  margin-top: 20px;
+}
+
+.stock-list table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.stock-list th, .stock-list td {
+  border: 1px solid #ddd;
+  padding: 10px;
+  text-align: left;
+  white-space: nowrap; /* 防止內容換行 */
+}
+
+.stock-list th {
+  background-color: #f2f2f2;
+  font-weight: bold;
+}
+
+.stock-list tbody tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.stock-list tbody tr:hover {
+  background-color: #e9e9e9;
+}
+.positive {
+  color: #008000; /* Changed to green for positive change */
+}
+
+.negative {
+  color: #FF0000; /* Changed to red for negative change */
+}
+
+.stock-actions {
+  display: flex;
+  gap: 5px; /* 調整按鈕間距 */
+}
+</style>
+
+<style scoped>
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000; /* Ensure it's on top */
+}
+
+.modal-content {
+  background-color: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 600px; /* Adjust max-width as needed */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.5em;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  font-size: 1.5em;
+  cursor: pointer;
+  padding: 0;
+}
+
+.modal-body {
+  /* Add padding or specific styles for the body content */
+}
+
+.chart-data-switch {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+  gap: 10px;
+}
+
+.chart-data-switch button {
+  padding: 8px 15px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background-color: #f9f9f9;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.chart-data-switch button:hover {
+  background-color: #e9e9e9;
+}
+
+.chart-data-switch button.active {
+  background-color: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+</style>
+
+<style scoped>
+.taiex-info {
+  /* text-align: center; */ /* Removed center alignment */
+  font-size: 1.2em;
+  margin-bottom: 20px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background-color: #f9f9f9;
+  width: 100%; /* Ensure it takes full width to respect parent's align-items */
+  text-align: center; /* Align text to the center within its container */
+  box-sizing: border-box; /* Include padding and border in the element's total width */
+}
+
+.taiex-info .positive {
+  color: #008000; /* Changed to green for positive change */
+}
+
+.taiex-info .negative {
+  color: #FF0000; /* Changed to red for negative change */
+}
+
+.fetch-time {
+  /* position: absolute; */ /* Removed absolute positioning */
+  /* top: 10px; */
+  /* right: 10px; */
+  font-size: 0.9em;
+  color: #555;
+  text-align: right; /* Align text to the right within its container */
+  width: 100%; /* Ensure it takes full width to respect text-align */
+}
+
+.current-time {
+  font-size: 0.9em;
+  color: #555;
+  /* Ensure no conflicting styles like float or absolute positioning */
+  width: 100%; /* Ensure it takes full width to respect parent's align-items */
+  text-align: right; /* Align text to the right within its container */
+}
 </style>

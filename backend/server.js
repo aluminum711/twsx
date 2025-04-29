@@ -132,17 +132,16 @@ if (fs.existsSync(dataFilePath)) {
  *                   description: Partially retrieved stock data (if any).
  */
 app.post('/api/stock-data', async (req, res) => {
-  // Get stock codes from the backend's stockData object
-  const stockCodes = Object.keys(stockData);
+  const { stockCodes } = req.body;
 
-  if (stockCodes.length === 0) {
-    return res.json({ sysTime: null, stockData: {} }); // Return empty data if no stocks are tracked
+  if (!stockCodes || !Array.isArray(stockCodes) || stockCodes.length === 0) {
+    return res.status(400).json({ error: 'Invalid or empty stockCodes array' });
   }
 
   const results = {};
   const apiBaseUrl = 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp';
 
-  // Construct the ex_ch parameter for all tracked stock codes
+  // Construct the ex_ch parameter for all requested stock codes
   const exChParam = stockCodes.map(code => {
     if (code.startsWith('tse_') && code.endsWith('.tw')) {
       return code;
@@ -199,44 +198,27 @@ app.post('/api/stock-data', async (req, res) => {
             };
         });
     } else {
-         // If API data is unexpected or empty, retain existing data for tracked stocks
          stockCodes.forEach(code => {
-             if (stockData[code]) {
-                 results[code] = stockData[code]; // Keep existing data
-             } else {
-                 results[code] = { error: 'API data format unexpected or empty' };
-             }
+             results[code] = { error: 'API data format unexpected or empty' };
          });
     }
 
   } catch (error) {
     console.error(`Error fetching data from TWSE API:`, error);
     fetchError = true; // Set error flag
-    // On fetch error, retain existing data for tracked stocks
     stockCodes.forEach(code => {
-        if (stockData[code]) {
-            results[code] = stockData[code]; // Keep existing data
-        } else {
-            results[code] = { error: 'Could not fetch data from new API' };
-        }
+        results[code] = { error: 'Could not fetch data from new API' };
     });
   }
 
   // Check for fetch errors before attempting to access apiData
-  if (fetchError && (!apiData || !Array.isArray(apiData.msgArray))) {
-      // If there was a fetch error and no valid data was received,
-      // return existing data if available, otherwise return error for each stock.
-       const errorResponseData = {};
-       stockCodes.forEach(code => {
-           errorResponseData[code] = stockData[code] || { error: 'Failed to fetch data from API' };
-       });
-      return res.status(500).json({ error: 'Failed to fetch data from API', stockData: errorResponseData });
+  if (fetchError) {
+      return res.status(500).json({ error: 'Failed to fetch data from API', stockData: results });
   }
-
 
   // If no fetch error, proceed with processing and sending the response
   const finalResponse = {
-    sysTime: apiData ? apiData.sysTime : null, // Include sysTime from the API response if available
+    sysTime: apiData.sysTime || null, // Include sysTime from the API response
     stockData: results // Wrap the stock data in a 'stockData' key
   };
 
@@ -253,163 +235,6 @@ app.post('/api/stock-data', async (req, res) => {
 
   res.json(finalResponse);
 });
-
-/**
- * @swagger
- * /api/tracked-stocks:
- *   get:
- *     summary: Get the list of tracked stock codes
- *     description: Returns an array of stock codes currently being tracked by the backend.
- *     responses:
- *       200:
- *         description: Successfully retrieved the list of tracked stocks.
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: string
- *               example: ["2330", "0050"]
- */
-app.get('/api/tracked-stocks', (req, res) => {
-  // Return the keys of the stockData object as the list of tracked stocks
-  res.json(Object.keys(stockData));
-});
-
-/**
- * @swagger
- * /api/tracked-stocks:
- *   post:
- *     summary: Add a stock code to the tracked list
- *     description: Adds a new stock code to the list of stocks tracked by the backend.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               stockCode:
- *                 type: string
- *                 description: The stock code to add (e.g., "2330").
- *             example:
- *               stockCode: "2330"
- *     responses:
- *       200:
- *         description: Successfully added the stock code.
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: "Stock code added successfully."
- *       400:
- *         description: Invalid request body or stock code already tracked.
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 error:
- *                   type: string
- *                   example: "Invalid request body or stock code already tracked."
- */
-app.post('/api/tracked-stocks', (req, res) => {
-  const { stockCode } = req.body;
-
-  if (!stockCode || typeof stockCode !== 'string') {
-    return res.status(400).json({ error: 'Invalid request body. "stockCode" (string) is required.' });
-  }
-
-  // Check if the stock is already tracked (case-insensitive check)
-  const existingCodes = Object.keys(stockData).map(code => code.toUpperCase());
-  if (existingCodes.includes(stockCode.toUpperCase())) {
-    return res.status(400).json({ error: `Stock code ${stockCode} is already being tracked.` });
-  }
-
-  // Add the new stock code to stockData with initial empty data
-  stockData[stockCode] = {}; // Initialize with empty data, actual data will be fetched later
-
-  // Save the updated stock data to the file
-  fs.writeFile(dataFilePath, JSON.stringify(stockData, null, 2), (err) => {
-    if (err) {
-      console.error('Error writing stock data to file after adding stock:', err);
-      return res.status(500).json({ error: 'Failed to save updated stock data.' });
-    } else {
-      console.log(`Stock code ${stockCode} added and data saved to`, dataFilePath);
-      res.json({ message: `Stock code ${stockCode} added successfully.` });
-    }
-  });
-});
-
-/**
- * @swagger
- * /api/tracked-stocks/{stockCode}:
- *   delete:
- *     summary: Remove a stock code from the tracked list
- *     description: Removes a stock code from the list of stocks tracked by the backend.
- *     parameters:
- *       - in: path
- *         name: stockCode
- *         required: true
- *         schema:
- *           type: string
- *         description: The stock code to remove (e.g., "2330").
- *     responses:
- *       200:
- *         description: Successfully removed the stock code.
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: "Stock code removed successfully."
- *       404:
- *         description: Stock code not found in the tracked list.
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 error:
- *                   type: string
- *                   example: "Stock code not found in the tracked list."
- *       500:
- *         description: Failed to save updated stock data.
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 error:
- *                   type: string
- *                   example: "Failed to save updated stock data."
- */
-app.delete('/api/tracked-stocks/:stockCode', (req, res) => {
-  const { stockCode } = req.params;
-
-  if (!stockData[stockCode]) {
-    return res.status(404).json({ error: `Stock code ${stockCode} not found in the tracked list.` });
-  }
-
-  delete stockData[stockCode];
-
-  // Save the updated stock data to the file
-  fs.writeFile(dataFilePath, JSON.stringify(stockData, null, 2), (err) => {
-    if (err) {
-      console.error('Error writing stock data to file after removing stock:', err);
-      return res.status(500).json({ error: 'Failed to save updated stock data.' });
-    } else {
-      console.log(`Stock code ${stockCode} removed and data saved to`, dataFilePath);
-      res.json({ message: `Stock code ${stockCode} removed successfully.` });
-    }
-  });
-});
-
 /**
  * @swagger
  * /api/taiex-data:

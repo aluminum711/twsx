@@ -5,7 +5,6 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   server: {
-    port: 55555, // 固定前端端口为 55555
     proxy: {
       '/api': {
         target: 'https://openapi.twse.com.tw',
