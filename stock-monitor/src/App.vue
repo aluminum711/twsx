@@ -1,15 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'; // 確保 watch 已導入, 引入 nextTick
-import Chart from 'chart.js/auto'; // 引入 Chart.js
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import Chart from 'chart.js/auto';
 const STORAGE_KEY = 'trackedStocks';
 
 interface StockData {
   Code: string;
   Name: string;
-  t?: string; // Latest data time (from backend sysTime)
-  v?: string; // Trade volume (not available from backend API)
-  z?: string; // Current price (from backend InstantPrice)
-  // Optional fields from backend API response
+  t?: string;
+  v?: string;
+  z?: string;
   InstantPrice?: string;
   PriceChange?: string;
   ChangePercentage?: string;
@@ -19,28 +18,26 @@ interface StockData {
 const trackedStocks = ref<string[]>([]);
 const stockData = ref<{ [key: string]: StockData }>({});
 const newStockCode = ref('');
-const lastFetchTime = ref<string | null>(null); // 新增響應式屬性來存儲 sysTime
-const currentTime = ref(''); // 新增響應式屬性來存儲當前系統時間
+const lastFetchTime = ref<string | null>(null);
+const currentTime = ref('');
 const taiexValue = ref<string | null>(null);
-const taiexPriceChange = ref<string | null>(null); // 新增響應式屬性來存儲 TAIEX 漲跌點數
+const taiexPriceChange = ref<string | null>(null);
 const taiexChangePercentage = ref<string | null>(null);
 
-// Modal related state and functions
 const isChartModalVisible = ref(false);
 const selectedStockCode = ref<string | null>(null);
 const selectedStockName = ref<string | null>(null);
-const stockChartData = ref<any>(null); // 新增：用於儲存圖表數據
-const stockMonthlyData = ref<any>(null); // 新增：用於儲存月度數據
-const stockYearlyData = ref<any>(null); // 新增：用於儲存年度數據
-const isMonthlyDataIncomplete = ref(false); // 新增：追蹤月度數據是否不完整
-let stockChartInstance: Chart | null = null; // 新增：用於儲存圖表實例
-const chartDataType = ref<'monthly' | 'yearly'>('monthly'); // 新增：用於記錄圖表數據類型
+const stockChartData = ref<any>(null);
+const stockMonthlyData = ref<any>(null);
+const stockYearlyData = ref<any>(null);
+const isMonthlyDataIncomplete = ref(false);
+let stockChartInstance: Chart | null = null;
+const chartDataType = ref<'monthly' | 'yearly'>('monthly');
 
-// 新增：監聽 chartDataType 的變化
 watch(chartDataType, async (newType, oldType) => {
   console.log(`chartDataType changed from ${oldType} to ${newType}`);
   if (newType === 'yearly') {
-    // 如果切換到年度數據，檢查是否已獲取
+    // If switching to yearly data, check if already fetched
     if (!stockYearlyData.value) {
       console.log('Fetching yearly data...');
       const stockCode = selectedStockCode.value;
@@ -53,9 +50,8 @@ watch(chartDataType, async (newType, oldType) => {
           const yearlyData = await yearlyResponse.json();
           console.log(`Fetched yearly data for ${stockCode}:`, yearlyData);
           stockYearlyData.value = yearlyData; // 儲存獲取到的年度數據
-          console.log('原始年度數據:', stockYearlyData.value); // 新增日誌
 
-          // 新增：對年度數據按照日期進行排序 (由小到大) - 與月度數據排序邏輯相同
+          // Sort yearly data by date (ascending)
           if (stockYearlyData.value && stockYearlyData.value.data && stockYearlyData.value.fields) {
             const fields = stockYearlyData.value.fields;
             const dateIndex = fields.indexOf('日期');
@@ -84,23 +80,21 @@ watch(chartDataType, async (newType, oldType) => {
                 if (comparableDateA > comparableDateB) return 1;
                 return 0;
               });
-              console.log('排序後的年度數據:', stockYearlyData.value.data); // 新增日誌
             } else {
               console.error('Date field not found in yearly data fields for sorting.');
             }
           }
-          // End of new sorting logic
 
         } catch (error) {
           console.error(`Error fetching stock yearly data for ${stockCode}:`, error);
-          stockYearlyData.value = null; // 清除數據或設置錯誤狀態
+          stockYearlyData.value = null;
         }
       }
     }
   }
 
-  // 無論切換到月度或年度，只要數據準備好，就重新渲染圖表
-  // 確保在 DOM 更新後渲染圖表
+  // Render chart when data is ready, regardless of type
+  // Ensure DOM is updated before rendering chart
   await nextTick();
   renderChart();
 });
@@ -109,7 +103,7 @@ const showChartModal = async (stockCode: string) => {
   selectedStockCode.value = stockCode;
   // Find the stock name based on the code
   const stock = Object.values(stockData.value).find(s => s.Code === stockCode);
-  selectedStockName.value = stock ? stock.Name : stockCode; // Use name if found, otherwise use code
+  selectedStockName.value = stock ? stock.Name : stockCode;
 
   // Reset chart data type to monthly when opening modal for a new stock
   chartDataType.value = 'monthly';
@@ -122,7 +116,7 @@ const showChartModal = async (stockCode: string) => {
     }
     const monthlyData = await monthlyResponse.json();
     console.log(`Fetched monthly data for ${stockCode}:`, monthlyData);
-    stockMonthlyData.value = monthlyData; // Store fetched monthly data
+    stockMonthlyData.value = monthlyData;
 
     // Sort monthly data by date (ascending)
     if (stockMonthlyData.value && stockMonthlyData.value.data && stockMonthlyData.value.fields) {
@@ -152,7 +146,6 @@ const showChartModal = async (stockCode: string) => {
           if (comparableDateA > comparableDateB) return 1;
           return 0;
         });
-        console.log('Sorted monthly data:', stockMonthlyData.value.data);
       } else {
         console.error('Date field not found in monthly data fields for sorting.');
       }
@@ -165,7 +158,6 @@ const showChartModal = async (stockCode: string) => {
     const lastDayOfMonth = new Date(year, month + 1, 0).getDate(); // Get number of days in current month
 
     // Simple check: if fetched data is less than the number of days in the current month, data might be incomplete
-    // Note: This is a simplified check, actual scenarios might require more complex logic (e.g., considering holidays)
     if (stockMonthlyData.value && stockMonthlyData.value.data && stockMonthlyData.value.data.length < lastDayOfMonth) {
       isMonthlyDataIncomplete.value = true;
     } else {
@@ -174,8 +166,8 @@ const showChartModal = async (stockCode: string) => {
 
   } catch (error) {
     console.error(`Error fetching stock monthly data for ${stockCode}:`, error);
-    stockMonthlyData.value = null; // Clear data or set error status
-    isMonthlyDataIncomplete.value = false; // Reset incomplete status on error
+    stockMonthlyData.value = null;
+    isMonthlyDataIncomplete.value = false;
   }
 
   // Fetch yearly data (do not await, let it fetch in the background)
@@ -188,7 +180,7 @@ const showChartModal = async (stockCode: string) => {
     })
     .then(yearlyData => {
       console.log(`Fetched yearly data for ${stockCode}:`, yearlyData);
-      stockYearlyData.value = yearlyData; // Store fetched yearly data
+      stockYearlyData.value = yearlyData;
 
       // Sort yearly data by date (ascending)
       if (stockYearlyData.value && stockYearlyData.value.data && stockYearlyData.value.fields) {
@@ -218,7 +210,6 @@ const showChartModal = async (stockCode: string) => {
             if (comparableDateA > comparableDateB) return 1;
             return 0;
           });
-          console.log('Sorted yearly data:', stockYearlyData.value.data);
         } else {
           console.error('Date field not found in yearly data fields for sorting.');
         }
@@ -226,21 +217,20 @@ const showChartModal = async (stockCode: string) => {
     })
     .catch(error => {
       console.error(`Error fetching stock yearly data for ${stockCode}:`, error);
-      stockYearlyData.value = null; // Clear data or set error status
+      stockYearlyData.value = null;
     });
 
 
   isChartModalVisible.value = true;
-  await nextTick(); // Ensure DOM is updated before rendering chart
-  renderChart(); // Render chart after modal is visible and data fetch is initiated
+  await nextTick();
+  renderChart();
 };
 
 const hideChartModal = () => {
   isChartModalVisible.value = false;
   selectedStockCode.value = null;
   selectedStockName.value = null;
-  stockChartData.value = null; // 清除圖表數據
-  // 新增：銷毀圖表實例
+  stockChartData.value = null;
   if (stockChartInstance) {
     stockChartInstance.destroy();
     stockChartInstance = null;
@@ -414,7 +404,7 @@ const renderChart = () => {
       labels: labels,
       datasets: [
         {
-          label: `${selectedStockName.value} 月度漲跌幅 (%)`, // Always use "月度" for percentage change label
+          label: chartDataType.value === 'yearly' ? `${selectedStockName.value} 當年漲跌幅 (%)` : `${selectedStockName.value} 月度漲跌幅 (%)`,
           data: percentageChangeData,
           borderColor: '#007bff',
           tension: 0.1,
@@ -422,7 +412,7 @@ const renderChart = () => {
           yAxisID: 'y-percentage',
         },
         {
-          label: `${selectedStockName.value} 月度收盤價`, // Always use "月度" for closing price label
+          label: chartDataType.value === 'yearly' ? `${selectedStockName.value} 當年收盤價` : `${selectedStockName.value} 月度收盤價`,
           data: closingPriceData,
           borderColor: '#ff7f0e',
           tension: 0.1,
@@ -469,6 +459,10 @@ const renderChart = () => {
         }
       },
       plugins: {
+        title: {
+          display: true,
+          text: chartDataType.value === 'yearly' ? `${selectedStockName.value} 當年漲跌幅圖表` : `${selectedStockName.value} 月度漲跌幅圖表`
+        },
         tooltip: {
           callbacks: {
             label: function(context) {
@@ -897,7 +891,7 @@ onUnmounted(() => {
   <div v-if="isChartModalVisible" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <h2>{{ selectedStockName }} 當月漲跌幅圖表</h2>
+        <h2>{{ selectedStockName }} 歷史數據</h2>
         <button class="close-button" @click="hideChartModal">&times;</button>
       </div>
       <div class="modal-body">
