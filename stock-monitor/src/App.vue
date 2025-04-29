@@ -105,32 +105,16 @@ watch(chartDataType, async (newType, oldType) => {
   renderChart();
 });
 
-const showChartModal = async (stockCode: string) => { // 修改：增加 async
+const showChartModal = async (stockCode: string) => {
   selectedStockCode.value = stockCode;
   // Find the stock name based on the code
   const stock = Object.values(stockData.value).find(s => s.Code === stockCode);
   selectedStockName.value = stock ? stock.Name : stockCode; // Use name if found, otherwise use code
 
-  // 新增：呼叫後端 API 獲取歷史數據
-  try {
-    const response = await fetch(`${backendApiUrl}/stock-history/${stockCode}`);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const historyData = await response.json();
-    console.log(`Fetched history data for ${stockCode}:`, historyData);
-    stockChartData.value = historyData; // 儲存獲取到的數據
+  // Reset chart data type to monthly when opening modal for a new stock
+  chartDataType.value = 'monthly';
 
-    // 新增：在數據獲取後渲染圖表
-    // await nextTick(); // 確保 DOM 更新 - Moved renderChart call
-    // renderChart(); // Moved renderChart call
-
-  } catch (error) {
-    console.error(`Error fetching stock history for ${stockCode}:`, error);
-    stockChartData.value = null; // 清除數據或設置錯誤狀態
-  }
-
-  // 新增：呼叫後端 API 獲取月度數據
+  // Fetch monthly data
   try {
     const monthlyResponse = await fetch(`http://localhost:3000/api/stock-monthly/${stockCode}`);
     if (!monthlyResponse.ok) {
@@ -138,70 +122,117 @@ const showChartModal = async (stockCode: string) => { // 修改：增加 async
     }
     const monthlyData = await monthlyResponse.json();
     console.log(`Fetched monthly data for ${stockCode}:`, monthlyData);
-    stockMonthlyData.value = monthlyData; // 儲存獲取到的月度數據
-    console.log('原始月度數據:', stockMonthlyData.value); // 新增日誌
-    
-        // 新增：對月度數據按照日期進行排序 (由小到大)
-        if (stockMonthlyData.value && stockMonthlyData.value.data && stockMonthlyData.value.fields) {
-          const fields = stockMonthlyData.value.fields;
-          const dateIndex = fields.indexOf('日期');
-          if (dateIndex !== -1) {
-            stockMonthlyData.value.data.sort((a: string[], b: string[]) => {
-              const dateA = a[dateIndex];
-              const dateB = b[dateIndex];
+    stockMonthlyData.value = monthlyData; // Store fetched monthly data
 
-              // Convert "YYY/MM/DD" (Minguo) to "YYYY/MM/DD" (Gregorian) for correct sorting
-              const convertMinguoToGregorian = (dateStr: string): string => {
-                const parts = dateStr.split('/');
-                if (parts.length === 3) {
-                  const year = parseInt(parts[0], 10) + 1911;
-                  // Ensure month and day are zero-padded for correct lexicographical comparison
-                  const month = parts[1].padStart(2, '0');
-                  const day = parts[2].padStart(2, '0');
-                  return `${year}/${month}/${day}`;
-                }
-                return dateStr; // Return original if format is unexpected
-              };
+    // Sort monthly data by date (ascending)
+    if (stockMonthlyData.value && stockMonthlyData.value.data && stockMonthlyData.value.fields) {
+      const fields = stockMonthlyData.value.fields;
+      const dateIndex = fields.indexOf('日期');
+      if (dateIndex !== -1) {
+        stockMonthlyData.value.data.sort((a: string[], b: string[]) => {
+          const dateA = a[dateIndex];
+          const dateB = b[dateIndex];
 
-              const comparableDateA = convertMinguoToGregorian(dateA);
-              const comparableDateB = convertMinguoToGregorian(dateB);
+          // Convert "YYY/MM/DD" (Minguo) to "YYYY/MM/DD" (Gregorian) for correct sorting
+          const convertMinguoToGregorian = (dateStr: string): string => {
+            const parts = dateStr.split('/');
+            if (parts.length === 3) {
+              const year = parseInt(parts[0], 10) + 1911;
+              const month = parts[1].padStart(2, '0');
+              const day = parts[2].padStart(2, '0');
+              return `${year}/${month}/${day}`;
+            }
+            return dateStr; // Return original if format is unexpected
+          };
 
-              if (comparableDateA < comparableDateB) return -1;
-              if (comparableDateA > comparableDateB) return 1;
-              return 0;
-            });
-            console.log('排序後的月度數據:', stockMonthlyData.value.data); // 新增日誌
-          } else {
-            console.error('Date field not found in monthly data fields for sorting.');
-          }
-        }
-        // End of new sorting logic
-    
-        // 檢查月度數據完整性
+          const comparableDateA = convertMinguoToGregorian(dateA);
+          const comparableDateB = convertMinguoToGregorian(dateB);
+
+          if (comparableDateA < comparableDateB) return -1;
+          if (comparableDateA > comparableDateB) return 1;
+          return 0;
+        });
+        console.log('Sorted monthly data:', stockMonthlyData.value.data);
+      } else {
+        console.error('Date field not found in monthly data fields for sorting.');
+      }
+    }
+
+    // Check monthly data completeness
     const today = new Date();
     const year = today.getFullYear();
     const month = today.getMonth(); // 0-indexed
     const lastDayOfMonth = new Date(year, month + 1, 0).getDate(); // Get number of days in current month
 
-    // 簡單判斷：如果獲取到的數據量少於當月天數，則認為數據可能不完整
-    // 注意：這是一個簡化的判斷，實際情況可能需要更複雜的邏輯（例如考慮假日）
-    if (stockMonthlyData.value && stockMonthlyData.value.length < lastDayOfMonth) {
+    // Simple check: if fetched data is less than the number of days in the current month, data might be incomplete
+    // Note: This is a simplified check, actual scenarios might require more complex logic (e.g., considering holidays)
+    if (stockMonthlyData.value && stockMonthlyData.value.data && stockMonthlyData.value.data.length < lastDayOfMonth) {
       isMonthlyDataIncomplete.value = true;
     } else {
       isMonthlyDataIncomplete.value = false;
     }
 
-
-    // 新增：在月度數據獲取後渲染圖表
   } catch (error) {
     console.error(`Error fetching stock monthly data for ${stockCode}:`, error);
-    stockMonthlyData.value = null; // 清除數據或設置錯誤狀態
+    stockMonthlyData.value = null; // Clear data or set error status
     isMonthlyDataIncomplete.value = false; // Reset incomplete status on error
   }
 
+  // Fetch yearly data (do not await, let it fetch in the background)
+  fetch(`http://localhost:3000/api/stock-yearly/${stockCode}`)
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return response.json();
+    })
+    .then(yearlyData => {
+      console.log(`Fetched yearly data for ${stockCode}:`, yearlyData);
+      stockYearlyData.value = yearlyData; // Store fetched yearly data
+
+      // Sort yearly data by date (ascending)
+      if (stockYearlyData.value && stockYearlyData.value.data && stockYearlyData.value.fields) {
+        const fields = stockYearlyData.value.fields;
+        const dateIndex = fields.indexOf('日期');
+        if (dateIndex !== -1) {
+          stockYearlyData.value.data.sort((a: string[], b: string[]) => {
+            const dateA = a[dateIndex];
+            const dateB = b[dateIndex];
+
+            // Convert "YYY/MM/DD" (Minguo) to "YYYY/MM/DD" (Gregorian) for correct sorting
+            const convertMinguoToGregorian = (dateStr: string): string => {
+              const parts = dateStr.split('/');
+              if (parts.length === 3) {
+                const year = parseInt(parts[0], 10) + 1911;
+                const month = parts[1].padStart(2, '0');
+                const day = parts[2].padStart(2, '0');
+                return `${year}/${month}/${day}`;
+              }
+              return dateStr; // Return original if format is unexpected
+            };
+
+            const comparableDateA = convertMinguoToGregorian(dateA);
+            const comparableDateB = convertMinguoToGregorian(dateB);
+
+            if (comparableDateA < comparableDateB) return -1;
+            if (comparableDateA > comparableDateB) return 1;
+            return 0;
+          });
+          console.log('Sorted yearly data:', stockYearlyData.value.data);
+        } else {
+          console.error('Date field not found in yearly data fields for sorting.');
+        }
+      }
+    })
+    .catch(error => {
+      console.error(`Error fetching stock yearly data for ${stockCode}:`, error);
+      stockYearlyData.value = null; // Clear data or set error status
+    });
+
+
   isChartModalVisible.value = true;
-  await nextTick(); // 確保 DOM 更新
-  renderChart();
+  await nextTick(); // Ensure DOM is updated before rendering chart
+  renderChart(); // Render chart after modal is visible and data fetch is initiated
 };
 
 const hideChartModal = () => {
@@ -246,49 +277,98 @@ const renderChart = () => {
 
   // Validate indices
   if (dateIndex === -1 || closingPriceIndex === -1 || priceChangeIndex === -1) {
-    console.error('Required fields (日期, 收盤價, 漲跌價差) not found in monthly data fields.');
+    console.error('Required fields (日期, 收盤價, 漲跌價差) not found in data fields.');
     // Optionally display an error message to the user
     return;
   }
 
-const labels: string[] = [];
-  const percentageChangeData: number[] = [];
-  const closingPriceData: number[] = []; // 新增：用於儲存收盤價數據
+  let labels: string[] = [];
+  let percentageChangeData: number[] = [];
+  let closingPriceData: number[] = [];
 
-  // Process raw data to extract date, calculate daily percentage change, and extract closing price
-  rawData.forEach((dayData: string[]) => {
-    const date = dayData[dateIndex];
-    const closingPriceStr = dayData[closingPriceIndex];
-    const priceChangeStr = dayData[priceChangeIndex];
+  if (chartDataType.value === 'yearly') {
+    // Process yearly data to get the last day's data for each month
+    const monthlyLastDayData: { [key: string]: string[] } = {};
 
-    const closingPrice = parseFloat(closingPriceStr);
-    // The price change field might contain symbols like '+' or '-'
-    // Need to parse it carefully. Assuming it's a number string after potential symbols.
-    const priceChange = parseFloat(priceChangeStr.replace('+', '').replace('-', ''));
+    rawData.forEach((dayData: string[]) => {
+      const date = dayData[dateIndex];
 
-    // Determine the sign of the price change
-    const actualPriceChange = priceChangeStr.includes('-') ? -priceChange : priceChange;
+      // Extract month from date (assuming "YYYY/MM/DD" or "YYY/MM/DD" Minguo format)
+      const dateParts = date.split('/');
+      let year, month;
+      if (dateParts.length === 3) {
+        // Handle both Gregorian and Minguo years for grouping
+        year = parseInt(dateParts[0], 10);
+        if (year < 1911) { // Assuming Minguo year if less than 1911
+            year += 1911;
+        }
+        month = dateParts[1].padStart(2, '0');
+      } else {
+        console.error('Unexpected date format:', date);
+        return; // Skip this data point if date format is unexpected
+      }
+      const monthKey = `${year}/${month}`;
 
-    // Calculate percentage change: (Price Change / Yesterday's Closing Price) * 100
-    // Yesterday's Closing Price = Today's Closing Price - Today's Price Change
-    const yesterdayClose = closingPrice - actualPriceChange;
+      // Since rawData is sorted by date, the last data point encountered for a month will be the latest day
+      monthlyLastDayData[monthKey] = dayData;
+    });
 
-    let percentageChange = 0;
-    if (yesterdayClose !== 0) {
-      percentageChange = (actualPriceChange / yesterdayClose) * 100;
-    }
+    // Extract data for the last day of each month and populate labels and data arrays
+    const sortedMonths = Object.keys(monthlyLastDayData).sort(); // Sort months chronologically
 
-    // Format date if needed (e.g., remove year or change format)
-    // The date format from the API is typically "YYYY/MM/DD"
-    // Let's use "MM/DD" for chart labels
-    const formattedDate = date.substring(5); // Keep MM/DD
+    sortedMonths.forEach(monthKey => {
+      const lastDayData = monthlyLastDayData[monthKey];
 
-    labels.push(formattedDate);
-    percentageChangeData.push(parseFloat(percentageChange.toFixed(2))); // Store percentage change, rounded to 2 decimal places
-    closingPriceData.push(closingPrice); // 新增：儲存收盤價
-  });
+      const closingPriceStr = lastDayData[closingPriceIndex];
+      const priceChangeStr = lastDayData[priceChangeIndex];
 
-  console.log('傳入 renderChart 的數據:', { labels, percentageChangeData, closingPriceData }); // 更新日誌
+      const cleanedClosingPriceStr = closingPriceStr.replace(/,/g, ''); // Remove commas
+      const closingPrice = parseFloat(cleanedClosingPriceStr);
+
+      const priceChange = parseFloat(priceChangeStr.replace('+', '').replace('-', ''));
+      const actualPriceChange = priceChangeStr.includes('-') ? -priceChange : priceChange;
+
+      const yesterdayClose = closingPrice - actualPriceChange;
+      let percentageChange = 0;
+      if (yesterdayClose !== 0) {
+        percentageChange = (actualPriceChange / yesterdayClose) * 100;
+      }
+
+      console.log(`Month: ${monthKey}, Raw Closing Price: ${closingPriceStr}, Cleaned Closing Price: ${cleanedClosingPriceStr}, Parsed Closing Price: ${closingPrice}`); // Update logging
+
+      // Format month label (e.g., "YYYY/MM")
+      labels.push(monthKey);
+      closingPriceData.push(parseFloat(closingPrice.toFixed(2)));
+      percentageChangeData.push(parseFloat(percentageChange.toFixed(2)));
+    });
+
+  } else {
+    // Existing logic for monthly data (daily points)
+    rawData.forEach((dayData: string[]) => {
+      const date = dayData[dateIndex];
+      const closingPriceStr = dayData[closingPriceIndex];
+      const priceChangeStr = dayData[priceChangeIndex];
+
+      const closingPrice = parseFloat(closingPriceStr);
+      const priceChange = parseFloat(priceChangeStr.replace('+', '').replace('-', ''));
+      const actualPriceChange = priceChangeStr.includes('-') ? -priceChange : priceChange;
+
+      const yesterdayClose = closingPrice - actualPriceChange;
+      let percentageChange = 0;
+      if (yesterdayClose !== 0) {
+        percentageChange = (actualPriceChange / yesterdayClose) * 100;
+      }
+
+      // Format date as "MM/DD" for monthly chart labels
+      const formattedDate = date.substring(date.indexOf('/') + 1); // Keep MM/DD or M/D
+
+      labels.push(formattedDate);
+      percentageChangeData.push(parseFloat(percentageChange.toFixed(2)));
+      closingPriceData.push(closingPrice);
+    });
+  }
+
+  console.log('傳入 renderChart 的數據:', { labels, percentageChangeData, closingPriceData });
 
 
   // Calculate min/max for closing price data with 10% padding
@@ -302,7 +382,30 @@ const labels: string[] = [];
     priceMax = maxPrice + priceRange * 0.1;
   }
 
+  // Calculate min/max for percentage change data with padding
+  let percentageMin = -10; // Default for monthly
+  let percentageMax = 10; // Default for monthly
+
+  if (chartDataType.value === 'yearly' && percentageChangeData.length > 0) {
+    const minPercentage = Math.min(...percentageChangeData);
+    const maxPercentage = Math.max(...percentageChangeData);
+    const percentageRange = maxPercentage - minPercentage;
+    percentageMin = minPercentage - percentageRange * 0.1;
+    percentageMax = maxPercentage + percentageRange * 0.1;
+
+    // Ensure min/max are not the same if all values are identical
+    if (percentageMin === percentageMax) {
+        percentageMin -= 1;
+        percentageMax += 1;
+    }
+  }
+
+
   // Reverse the data and labels to show oldest data first on the chart
+  // This might not be necessary if the data is already sorted chronologically
+  // labels.reverse();
+  // percentageChangeData.reverse();
+  // closingPriceData.reverse();
 
 
   stockChartInstance = new Chart(ctx, {
@@ -311,20 +414,20 @@ const labels: string[] = [];
       labels: labels,
       datasets: [
         {
-          label: `${selectedStockName.value} 月度漲跌幅 (%)`,
-          data: percentageChangeData, // 使用漲跌幅數據
+          label: `${selectedStockName.value} 月度漲跌幅 (%)`, // Always use "月度" for percentage change label
+          data: percentageChangeData,
           borderColor: '#007bff',
           tension: 0.1,
           fill: false,
-          yAxisID: 'y-percentage', // 指定使用漲跌幅的 Y 軸
+          yAxisID: 'y-percentage',
         },
         {
-          label: `${selectedStockName.value} 收盤價`, // 新增：收盤價數據集標籤
-          data: closingPriceData, // 新增：使用收盤價數據
-          borderColor: '#ff7f0e', // 新增：收盤價趨勢線顏色
+          label: `${selectedStockName.value} 月度收盤價`, // Always use "月度" for closing price label
+          data: closingPriceData,
+          borderColor: '#ff7f0e',
           tension: 0.1,
           fill: false,
-          yAxisID: 'y-price', // 新增：指定使用收盤價的 Y 軸
+          yAxisID: 'y-price',
         }
       ]
     },
@@ -335,50 +438,50 @@ const labels: string[] = [];
         x: {
           title: {
             display: true,
-            text: '日期'
+            text: chartDataType.value === 'yearly' ? '月份' : '日期' // Keep x-axis title dynamic
           }
         },
-        'y-percentage': { // 漲跌幅的 Y 軸
+        'y-percentage': {
           type: 'linear',
           position: 'left',
           title: {
             display: true,
             text: '漲跌幅 (%)'
           },
-          min: -10, // Fixed min to -10%
-          max: 10, // Fixed max to 10%
-          ticks: { // Add ticks configuration
-            stepSize: 1 // Set step size to 1 for percentage points
+          min: percentageMin, // Use dynamic min for yearly, fixed for monthly
+          max: percentageMax, // Use dynamic max for yearly, fixed for monthly
+          ticks: {
+            stepSize: chartDataType.value === 'yearly' ? undefined : 1 // Auto step size for yearly, fixed 1 for monthly
           }
         },
-        'y-price': { // 新增：收盤價的 Y 軸
+        'y-price': {
           type: 'linear',
-          position: 'right', // 放在右側
+          position: 'right',
           title: {
             display: true,
             text: '收盤價'
           },
           grid: {
-            drawOnChartArea: false, // 不在圖表區域繪製網格線，避免與左側 Y 軸重疊
+            drawOnChartArea: false,
           },
-          min: priceMin, // Add calculated min
-          max: priceMax, // Add calculated max
+          min: priceMin,
+          max: priceMax,
         }
       },
       plugins: {
         tooltip: {
           callbacks: {
             label: function(context) {
-              let label = context.dataset.label ? context.dataset.label : ''; // 檢查 label 是否存在
+              let label = context.dataset.label ? context.dataset.label : '';
               if (label) {
                 label += ': ';
               }
               if (context.parsed.y !== null) {
-                // 根據數據集判斷格式
-                if (label.includes('漲跌幅')) { // 使用檢查後的 label
+                // Check the dataset label to determine formatting
+                if (context.dataset.label && context.dataset.label.includes('漲跌幅')) {
                   label += context.parsed.y.toFixed(2) + '%';
                 } else {
-                  label += context.parsed.y.toFixed(2); // 收盤價不需要百分比符號
+                  label += context.parsed.y.toFixed(2);
                 }
               }
               return label;
@@ -804,8 +907,10 @@ onUnmounted(() => {
           <canvas id="stock-daily-change-chart"></canvas>
           <p v-if="!stockMonthlyData && chartDataType === 'monthly'">正在載入月度圖表數據...</p> <!-- 修改：檢查 stockMonthlyData -->
           <!-- Add loading/error state for yearly data if needed -->
-          <p v-if="isMonthlyDataIncomplete && chartDataType === 'monthly'" style="color: orange; text-align: center; margin-top: 10px;">注意：獲取到的月度數據可能不完整。</p>
         </div>
+
+        <!-- Warning Message -->
+        <p v-if="isMonthlyDataIncomplete && chartDataType === 'monthly'" style="color: orange; text-align: center; margin-top: 10px;">注意：獲取到的月度數據可能不完整。</p>
 
         <!-- Data Type Switch Buttons -->
         <div class="chart-data-switch">
