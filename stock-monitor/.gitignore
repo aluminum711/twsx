@@ -11,6 +11,12 @@ node_modules
 dist
 dist-ssr
 *.local
+<<<<<<< HEAD:stock-monitor/.gitignore
+=======
+dist-electron
+backend/node_modules
+stock-monitor/node_modules
+>>>>>>> 97ea6d5 (Commit):.gitignore
 
 # Editor directories and files
 .vscode/*
