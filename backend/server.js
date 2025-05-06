@@ -783,3 +783,8 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.listen(port, () => {
   console.log(`Backend server listening at http://localhost:${port}`);
 });
+
+// 添加健康检查端点
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});

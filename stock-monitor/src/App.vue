@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import Chart from 'chart.js/auto';
+import { ElMessage } from 'element-plus';
+import { checkBackendHealth } from './utils/api';
 const STORAGE_KEY = 'trackedStocks';
 
 interface StockData {
@@ -752,8 +754,16 @@ let currentTimeInterval: number | null = null; // 新增定時器變數
 
 
 onMounted(async () => {
-  // Load tracked stocks from backend
   try {
+    const isBackendReady = await checkBackendHealth();
+    if (!isBackendReady) {
+      console.error('后端服务未就绪');
+      // 可以在这里显示错误提示给用户
+      ElMessage.error('系统服务未就绪，请稍后再试');
+      return;
+    }
+
+    // Load tracked stocks from backend
     const response = await fetch('http://localhost:3000/api/user-stocks');
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
