@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 let mainWindow;
@@ -6,8 +6,17 @@ let backendProcess;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 580,
+    height: 400,
+    frame: false,
+    resizable: true,
+    useContentSize: true,
+    maxHeight: 800,
+    minHeight: 400,
+    movable: true,
+    alwaysOnTop: true, // 添加置顶功能
+    transparent: true, // 支持透明背景
+    hasShadow: false, // 移除窗口阴影
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -80,5 +89,14 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   if (backendProcess) {
     backendProcess.kill();
+  }
+});
+
+// 修改 resize-window 事件处理
+ipcMain.on('resize-window', (event, { width, height }) => {
+  if (mainWindow) {
+    // 确保高度不低于最小值
+    const finalHeight = Math.max(height, 200);
+    mainWindow.setSize(width, finalHeight);
   }
 });

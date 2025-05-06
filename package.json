@@ -5,7 +5,7 @@
   "author": "Noah",
   "main": "main.js",
   "scripts": {
-    "electron:build": "cd stock-monitor && npm run build && cd .. && rm -rf dist-electron && cd backend && npm install --production && cd .. && electron-builder",
+    "electron:build": "cd stock-monitor && npm run build && cd .. && rm -rf dist-electron && cd backend && npm install --production && cd .. && electron-builder -mw",
     "electron:serve": "cd stock-monitor && npm run build && cd .. && electron ."
   },
   "build": {

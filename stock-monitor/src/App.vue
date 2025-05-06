@@ -1,8 +1,29 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import Chart from 'chart.js/auto';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElTable, ElTableColumn, ElButton } from 'element-plus';
 import { checkBackendHealth } from './utils/api';
+
+// Watch for changes in stock data and table rendering
+watch([() => Object.keys(stockData.value).length, () => stockData.value], async () => {
+  await nextTick();
+  setTimeout(() => {
+    const container = document.querySelector('.container');
+    if (container) {
+      const tableEl = container.querySelector('.el-table') as HTMLElement;
+      const inputSectionEl = container.querySelector('.input-section') as HTMLElement;
+      const tableHeight = tableEl?.offsetHeight || 0;
+      const inputSectionHeight = inputSectionEl?.offsetHeight || 0;
+      const totalHeight = tableHeight + inputSectionHeight + 60; // 60px 為額外間距
+      
+      // 只保留最小高度限制
+      const finalHeight = Math.max(totalHeight, 200);
+      if (window.electron?.resizeWindow) {
+        window.electron.resizeWindow(580, finalHeight); // 使用與 main.js 中相同的寬度
+      }
+    }
+  }, 100);
+}, { deep: true });
 const STORAGE_KEY = 'trackedStocks';
 
 interface StockData {
@@ -823,6 +844,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <div class="drag-area"></div>
   <div class="container">
     <h1>台灣上市個股成交資訊</h1>
 
@@ -855,45 +877,30 @@ onUnmounted(() => {
     </div>
 
     <div class="stock-list">
-      <table>
-        <thead>
-          <tr>
-            <th>股票代碼</th>
-            <th>股票名稱</th>
-            <th>漲跌幅</th>
-            <th>漲跌</th>
-            <th>現價</th>
-            <th>昨日收盤價</th>
-            <th>成交量</th>
-            <th>最新資料時間</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="code in trackedStocks" :key="code">
-            <template v-if="stockData[code]">
-              <td>{{ stockData[code].Code }}</td>
-              <td>{{ stockData[code].Name }}</td>
-              <td :class="{ 'positive': parseFloat(stockData[code].ChangePercentage || '') > 0, 'negative': parseFloat(stockData[code].ChangePercentage || '') < 0 }">{{ stockData[code].ChangePercentage || '-' }}</td> <!-- Display Change Percentage -->
-              <td :class="{ 'positive': parseFloat(stockData[code].PriceChange || '') > 0, 'negative': parseFloat(stockData[code].PriceChange || '') < 0 }">{{ stockData[code].PriceChange || '-' }}</td> <!-- Display Price Change -->
-              <td>{{ stockData[code].z || '-' }}</td> <!-- Display current price (z) -->
-              <td>{{ stockData[code].YesterdayClose || '-' }}</td> <!-- Display Yesterday Close -->
-              <td>{{ stockData[code].v || '-' }}</td> <!-- Display Trade Volume (v) -->
-              <td>{{ stockData[code].t || '-' }}</td> <!-- Display latest data time (t) -->
-              <td class="stock-actions">
-                <button @click="showChartModal(stockData[code].Code)">顯示圖表</button>
-                <button @click="removeStock(code)">刪除</button>
-              </td>
-            </template>
-            <template v-else>
-              <td colspan="9" style="text-align: center;">載入 {{ code }} 資料中...</td> <!-- Adjusted colspan -->
-            </template>
-          </tr>
-          <tr v-if="trackedStocks.length === 0">
-            <td colspan="9" style="text-align: center;">請輸入個股代碼以開始追蹤</td> <!-- Adjusted colspan -->
-          </tr>
-        </tbody>
-      </table>
+      <el-table :data="Object.values(stockData)" style="width: 100%" stripe @row-click="(row) => showChartModal(row.Code)">
+        <el-table-column prop="Code" label="代碼" width="90" />
+        <el-table-column prop="Name" label="名稱" width="150" />
+        <el-table-column label="現價/昨收" width="90" align="right">
+          <template #default="scope">
+            <div class="price-container">
+              <div>{{ scope.row.InstantPrice }}</div>
+              <div class="yesterday-close">{{ scope.row.YesterdayClose }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="漲跌/幅" width="100" align="right">
+          <template #default="scope">
+            <span :class="{ 'price-up': parseFloat(scope.row.PriceChange) > 0, 'price-down': parseFloat(scope.row.PriceChange) < 0 }">
+              {{ scope.row.PriceChange }} ({{ scope.row.ChangePercentage }})
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="70" align="center">
+          <template #default="scope">
+            <el-button type="danger" size="small" @click="removeStock(scope.row.Code)">刪除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
   </div>
 
@@ -938,26 +945,87 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.app-header {
+  -webkit-app-region: drag;
+  height: 30px;
+  width: 100%;
+  background: #f5f5f5;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 9999;
+}
+
+.app-header button {
+  -webkit-app-region: no-drag;
+}
+
+.drag-area {
+  -webkit-app-region: drag;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  z-index: 9999;
+}
+
 .container {
-  background-color: #f8f8f8; /* Added light grey background */
-  margin: 0 auto;
-  padding: 20px;
+  -webkit-app-region: no-drag;
+  background-color: rgba(248, 248, 248, 0.95);
+  margin-top: 30px;
+  padding: 10px;
+  width: 520px;
+  margin-left: auto;
+  margin-right: auto;
   font-family: sans-serif;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+.container::-webkit-scrollbar {
+  width: 0;
+  display: none;
+}
+
+.container.show-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  display: block;
+}
+
+.container.show-scrollbar::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.container.show-scrollbar::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 3px;
+}
+
+.container.show-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #555;
 }
 
 .header-info {
-  margin-bottom: 20px; /* Add some space below this block */
+  margin-bottom: 0px; /* Add some space below this block */
+  margin-top: 0px;
 }
 
 h1, h2 {
   text-align: center;
   color: #333;
+  margin-top:0px;
+  margin-bottom: 0px;
 }
 
 .input-area {
   display: flex;
-  margin-bottom: 20px;
-  gap: 10px;
+  margin-bottom: 0px;
+  margin-top: 0px;
+  gap:10px;
 }
 
 .input-area input {
@@ -982,13 +1050,27 @@ h1, h2 {
 }
 
 .stock-list {
-  margin-top: 20px;
+  margin-top: 0px;
 }
 
-.stock-list table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 10px;
+.el-table {
+  width: 100% !important;
+  max-width: 520px !important;
+}
+
+/* 确保表格容器不会出现水平滚动 */
+.el-table__body-wrapper {
+  overflow-x: hidden !important;
+}
+
+/* 确保表格内容不会超出容器 */
+.el-table__inner-wrapper {
+  width: 100% !important;
+}
+
+.el-table__body,
+.el-table__header {
+  width: 100% !important;
 }
 
 .stock-list th, .stock-list td {
@@ -1010,17 +1092,35 @@ h1, h2 {
 .stock-list tbody tr:hover {
   background-color: #e9e9e9;
 }
-.positive {
-  color: #FF0000; /* Changed to green for positive change */
+.price-up {
+  color: #FF0000; /* Red for price up */
 }
 
-.negative {
-  color: #008000; /* Changed to red for negative change */
+.price-down {
+  color: #008000; /* Green for price down */
+}
+
+.price-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.yesterday-close {
+  font-size: 12px;
+  color: #999;
 }
 
 .stock-actions {
   display: flex;
   gap: 5px; /* 調整按鈕間距 */
+}
+
+button,
+input,
+.el-input,
+.el-button {
+  -webkit-app-region: no-drag;
 }
 </style>
 
