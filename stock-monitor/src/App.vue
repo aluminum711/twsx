@@ -1,31 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import Chart from 'chart.js/auto';
-import { ElMessage, ElTable, ElTableColumn, ElButton } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { checkBackendHealth } from './utils/api';
 
-// Watch for changes in stock data and table rendering
-watch([() => Object.keys(stockData.value).length, () => stockData.value], async () => {
-  await nextTick();
-  setTimeout(() => {
-    const container = document.querySelector('.container');
-    if (container) {
-      const tableEl = container.querySelector('.el-table') as HTMLElement;
-      const inputSectionEl = container.querySelector('.input-section') as HTMLElement;
-      const tableHeight = tableEl?.offsetHeight || 0;
-      const inputSectionHeight = inputSectionEl?.offsetHeight || 0;
-      const totalHeight = tableHeight + inputSectionHeight + 60; // 60px 為額外間距
-      
-      // 只保留最小高度限制
-      const finalHeight = Math.max(totalHeight, 200);
-      if (window.electron?.resizeWindow) {
-        window.electron.resizeWindow(580, finalHeight); // 使用與 main.js 中相同的寬度
-      }
-    }
-  }, 100);
-}, { deep: true });
-const STORAGE_KEY = 'trackedStocks';
-
+// First, define the interface
 interface StockData {
   Code: string;
   Name: string;
@@ -36,16 +15,41 @@ interface StockData {
   PriceChange?: string;
   ChangePercentage?: string;
   YesterdayClose?: string;
+  UpperLimit?: string;
+  LowerLimit?: string; 
+  Market?: string;
 }
 
-const trackedStocks = ref<string[]>([]);
+// Then initialize all reactive variables
+const STORAGE_KEY = 'trackedStocks';
 const stockData = ref<{ [key: string]: StockData }>({});
+const trackedStocks = ref<string[]>([]);
 const newStockCode = ref('');
 const lastFetchTime = ref<string | null>(null);
 const currentTime = ref('');
 const taiexValue = ref<string | null>(null);
 const taiexPriceChange = ref<string | null>(null);
 const taiexChangePercentage = ref<string | null>(null);
+
+// Now we can safely set up the watch
+watch([() => Object.keys(stockData.value).length, () => stockData.value], async () => {
+  await nextTick();
+  setTimeout(() => {
+    const container = document.querySelector('.container');
+    if (container) {
+      const tableEl = container.querySelector('.el-table') as HTMLElement;
+      const inputSectionEl = container.querySelector('.input-section') as HTMLElement;
+      const tableHeight = tableEl?.offsetHeight || 0;
+      const inputSectionHeight = inputSectionEl?.offsetHeight || 0;
+      const totalHeight = tableHeight + inputSectionHeight + 60;
+      
+      const finalHeight = Math.max(totalHeight, 200);
+      if (window.electron?.resizeWindow) {
+        window.electron.resizeWindow(580, finalHeight);
+      }
+    }
+  }, 100);
+}, { deep: true });
 
 const isChartModalVisible = ref(false);
 const selectedStockCode = ref<string | null>(null);
@@ -414,13 +418,6 @@ const renderChart = () => {
   }
 
 
-  // Reverse the data and labels to show oldest data first on the chart
-  // This might not be necessary if the data is already sorted chronologically
-  // labels.reverse();
-  // percentageChangeData.reverse();
-  // closingPriceData.reverse();
-
-
   stockChartInstance = new Chart(ctx, {
     type: 'line', // or 'bar'
     data: {
@@ -575,6 +572,9 @@ const fetchStockData = async () => {
             PriceChange: (isTradingHours && item.PriceChange === 'N/A' && stockData.value[code]?.PriceChange !== undefined) ? stockData.value[code].PriceChange : item.PriceChange,
             ChangePercentage: (isTradingHours && item.ChangePercentage === 'N/A' && stockData.value[code]?.ChangePercentage !== undefined) ? stockData.value[code].ChangePercentage : item.ChangePercentage,
             YesterdayClose: item.YesterdayClose, // Assuming YesterdayClose is not N/A during trading hours
+            UpperLimit: item.UpperLimit,
+            LowerLimit: item.LowerLimit,
+            Market: item.Market,
           };
         }
       }
@@ -591,14 +591,38 @@ const fetchStockData = async () => {
 };
 
 // Function to add a stock
-const addStock = async () => {
-  const code = newStockCode.value.trim().toUpperCase();
-  if (code && !trackedStocks.value.includes(code)) {
-    trackedStocks.value.push(code);
-    newStockCode.value = ''; // Clear input field
-    await saveTrackedStocks(); // Save updated list to backend
-    fetchStockData(); // Fetch data for the newly added stock
+const addStock = () => {
+  if (newStockCode.value.trim() === '') {
+    ElMessage.warning('請輸入股票代碼');
+    return;
   }
+  const codeToAdd = `tse_${newStockCode.value.trim()}`;
+  if (!trackedStocks.value.includes(codeToAdd)) {
+    trackedStocks.value.push(codeToAdd);
+    saveTrackedStocks();
+    fetchStockData();
+    ElMessage.success(`已新增股票 ${codeToAdd}`);
+  } else {
+    ElMessage.warning(`股票 ${codeToAdd} 已在追蹤列表中`);
+  }
+  newStockCode.value = '';
+};
+
+const addOtcStock = () => {
+  if (newStockCode.value.trim() === '') {
+    ElMessage.warning('請輸入股票代碼');
+    return;
+  }
+  const codeToAdd = `otc_${newStockCode.value.trim()}`;
+  if (!trackedStocks.value.includes(codeToAdd)) {
+    trackedStocks.value.push(codeToAdd);
+    saveTrackedStocks();
+    fetchStockData();
+    ElMessage.success(`已新增上櫃股票 ${codeToAdd}`);
+  } else {
+    ElMessage.warning(`上櫃股票 ${codeToAdd} 已在追蹤列表中`);
+  }
+  newStockCode.value = '';
 };
 // };
 
@@ -740,32 +764,52 @@ const saveTrackedStocks = async () => {
 // Function to save tracked stocks to backend
 
 
-// Function to add a stock
-// Function to save tracked stocks to backend
+
+const formatVolume = (volume: string | undefined): string => {
+  if (!volume) return '0';
+  const num = parseInt(volume, 10);
+  if (isNaN(num)) return '0';
+  
+  if (num >= 100000000) {
+    return (num / 100000000).toFixed(2) + '億';
+  } else if (num >= 10000) {
+    return (num / 10000).toFixed(2) + '萬';
+  }
+  return num.toLocaleString();
+};
 
 
+const getMarketClass = (market: string | undefined): string => {
+  // 确保 market 存在且为字符串
+  if (!market || typeof market !== 'string') {
+    return ''; // 默认为上市股票样式
+  }
+  
+  // 转换为小写进行比较，增加容错性
+  const marketLower = market.toLowerCase();
+  return marketLower === 'otc' ? 'otc-stock' : 'tse-stock';
+};
 
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-// Function to remove a stock
-const removeStock = async (code: string) => {
-  trackedStocks.value = trackedStocks.value.filter(stockCode => stockCode !== code);
-  // Also remove from stockData
-  const updatedStockData = { ...stockData.value };
-  delete updatedStockData[code];
-  stockData.value = updatedStockData;
+
+const removeStock = async (stockIdToRemove: string | undefined) => {
+  
+  if (!stockIdToRemove) return;
+  trackedStocks.value = trackedStocks.value.filter(id => id !== stockIdToRemove);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(trackedStocks.value));
+  // Remove from stockData as well
+  if (stockData.value[stockIdToRemove]) {
+    delete stockData.value[stockIdToRemove];
+  }
+  // If no stocks are tracked, clear data
+  if (trackedStocks.value.length === 0) {
+    stockData.value = {};
+  }
   await saveTrackedStocks(); // Save updated list to backend
+};
+
+const findStockIdByRawCode = (rawCode: string): string | undefined => {
+  // This helper function finds the prefixed stockId (key in stockData) using the raw code
+  return Object.keys(stockData.value).find(id => stockData.value[id].Code === rawCode);
 };
 
 
@@ -778,8 +822,6 @@ onMounted(async () => {
   try {
     const isBackendReady = await checkBackendHealth();
     if (!isBackendReady) {
-      console.error('后端服务未就绪');
-      // 可以在这里显示错误提示给用户
       ElMessage.error('系统服务未就绪，请稍后再试');
       return;
     }
@@ -809,9 +851,9 @@ onMounted(async () => {
   fetchStockData(); // Initial fetch
   fetchTaiexData(); // Fetch TAIEX data on mount
   // Set up interval for fetching data every 0.5 seconds
-  const intervalId = setInterval(fetchStockData, 500);
+  const intervalId = setInterval(fetchStockData, 5000);
   // Set up interval for fetching TAIEX data every 1 seconds
-  const taiexIntervalId = setInterval(fetchTaiexData, 1000);
+  const taiexIntervalId = setInterval(fetchTaiexData, 5000);
 
   // Clear interval on component unmount
   onUnmounted(() => {
@@ -846,7 +888,7 @@ onUnmounted(() => {
 <template>
   <div class="drag-area"></div>
   <div class="container">
-    <h1>台灣上市個股成交資訊</h1>
+    <h1>台灣個股成交資訊</h1>
 
     <div class="header-info">
       <div class="current-time">
@@ -861,14 +903,16 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="input-area">
-      <input
-        type="text"
+    <div class="input-section">
+      <ElInput
         v-model="newStockCode"
-        placeholder="輸入個股代碼 (例如: 2330)"
+        placeholder="輸入股票代碼"
         @keyup.enter="addStock"
+        clearable
+        style="width: 50%; margin-right: 10px;"
       />
-      <button @click="addStock">新增個股</button>
+      <ElButton type="primary" @click="addStock" style="margin-right: 0%;margin-left: 10px;">＋上市股票</ElButton>
+      <ElButton type="warning" @click="addOtcStock" style="margin-right: 0px;">＋上櫃股票</ElButton>
     </div>
 
 
@@ -877,27 +921,62 @@ onUnmounted(() => {
     </div>
 
     <div class="stock-list">
-      <el-table :data="Object.values(stockData)" style="width: 100%" stripe @row-click="(row) => showChartModal(row.Code)">
-        <el-table-column prop="Code" label="代碼" width="90" />
-        <el-table-column prop="Name" label="名稱" width="150" />
+      <el-table :data="Object.values(stockData)" stripe style="width: 100%" class="stock-table">
+        <el-table-column label="股票資訊" width="120">
+          <template #default="scope">
+            <div class="stock-info">
+              <div class="stock-code" :class="getMarketClass(scope.row.Market)">{{ scope.row.Code }}</div>
+              <div class="stock-name" :class="getMarketClass(scope.row.Market)">{{ scope.row.Name }}</div>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="現價/昨收" width="90" align="right">
           <template #default="scope">
             <div class="price-container">
-              <div>{{ scope.row.InstantPrice }}</div>
+              <div :class="[
+                { 'price-up': parseFloat(scope.row.PriceChange) > 0, 'price-down': parseFloat(scope.row.PriceChange) < 0 },
+                { 'limit-up-bg': parseFloat(scope.row.InstantPrice) === parseFloat(scope.row.UpperLimit),
+                  'limit-down-bg': parseFloat(scope.row.InstantPrice) === parseFloat(scope.row.LowerLimit)
+                }
+              ]">{{ scope.row.InstantPrice }}</div>
               <div class="yesterday-close">{{ scope.row.YesterdayClose }}</div>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="漲跌/幅" width="100" align="right">
+        <el-table-column label="漲跌/幅" width="100" align="right" >
           <template #default="scope">
-            <span :class="{ 'price-up': parseFloat(scope.row.PriceChange) > 0, 'price-down': parseFloat(scope.row.PriceChange) < 0 }">
+            <span :class="[
+              { 'price-up': parseFloat(scope.row.PriceChange) > 0, 'price-down': parseFloat(scope.row.PriceChange) < 0 },
+              {
+                'limit-up-bg': parseFloat(scope.row.InstantPrice) === parseFloat(scope.row.UpperLimit),
+                'limit-down-bg': parseFloat(scope.row.InstantPrice) === parseFloat(scope.row.LowerLimit)
+              }
+            ]">
               {{ scope.row.PriceChange }} ({{ scope.row.ChangePercentage }})
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="70" align="center">
+        <el-table-column prop="v" label="成交量" width="100">
           <template #default="scope">
-            <el-button type="danger" size="small" @click="removeStock(scope.row.Code)">刪除</el-button>
+            {{ formatVolume(scope.row.v) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100">
+          <template #default="scope">
+            <el-button
+              size="small"
+              style="display: none;"
+              @click="showChartModal(scope.row.Code)"
+            >
+              圖表
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              @click="removeStock(findStockIdByRawCode(scope.row.Code))"
+            >
+              刪除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -1056,6 +1135,7 @@ h1, h2 {
 .el-table {
   width: 100% !important;
   max-width: 520px !important;
+  --el-table-row-height: 0px;  /* 默认是 50px，这里改小一些 */
 }
 
 /* 确保表格容器不会出现水平滚动 */
@@ -1092,12 +1172,85 @@ h1, h2 {
 .stock-list tbody tr:hover {
   background-color: #e9e9e9;
 }
+
+.stock-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0px;  /* 减小上下间距 */
+}
+
+.stock-code {
+  font-weight: bold;
+  line-height: 1;  /* 减小行高 */
+}
+
+.stock-name {
+  font-size: 0.9em;
+  line-height: 1;  /* 减小行高 */
+}
+
+.tse-stock {
+  color: #409EFF !important; /* 蓝色 - 上市股票 */
+}
+
+.otc-stock {
+  color: #e6a23c !important; /* 绿色 - 上柜股票 */
+}
+
 .price-up {
   color: #FF0000; /* Red for price up */
 }
 
 .price-down {
   color: #008000; /* Green for price down */
+}
+
+.limit-up {
+  background-color: #ffebee;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.limit-down {
+  background-color: #e8f5e9;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.limit-up-bg {
+  background-color: #ffebee !important;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: inline-block;
+  width: 100%;
+  text-align: right;
+}
+
+.limit-down-bg {
+  background-color: #e8f5e9 !important;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: inline-block;
+  width: 100%;
+  text-align: right;
+}
+
+/* 涨跌停板样式 */
+.el-table .limit-up-cell {
+  background-color: #ffebee !important;
+}
+
+.el-table .limit-down-cell {
+  background-color: #e8f5e9 !important;
+}
+
+/* 确保hover状态下背景色不变 */
+.el-table .limit-up-cell:hover > * {
+  background-color: #ffebee !important;
+}
+
+.el-table .limit-down-cell:hover > * {
+  background-color: #e8f5e9 !important;
 }
 
 .price-container {
@@ -1121,6 +1274,10 @@ input,
 .el-input,
 .el-button {
   -webkit-app-region: no-drag;
+}
+
+.el-table td.el-table__cell {
+  padding: 0px 0;  /* 上下内边距改为 4px */
 }
 </style>
 

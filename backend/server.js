@@ -132,7 +132,7 @@ if (fs.existsSync(dataFilePath)) {
  *                   description: Partially retrieved stock data (if any).
  */
 app.post('/api/stock-data', async (req, res) => {
-  const { stockCodes } = req.body;
+  const { stockCodes } = req.body; // stockCodes are now prefixed, e.g., ["tse_2330.tw", "otc_6446.tw"]
 
   if (!stockCodes || !Array.isArray(stockCodes) || stockCodes.length === 0) {
     return res.status(400).json({ error: 'Invalid or empty stockCodes array' });
@@ -143,23 +143,27 @@ app.post('/api/stock-data', async (req, res) => {
 
   // Construct the ex_ch parameter for all requested stock codes
   const exChParam = stockCodes.map(code => {
-    if (code.startsWith('tse_') && code.endsWith('.tw')) {
-      return code;
+    if (code.startsWith('otc_')) {
+      // For OTC stocks, format as otc_CODE.tw
+      return `${code}.tw`;
+    } else if (code.startsWith('tse_')) {
+      // Already correctly formatted TSE stock
+      return `${code}.tw`;
     } else {
+      // For TSE stocks (or if no prefix), format as tse_CODE.tw
       return `tse_${code}.tw`;
     }
   }).join('|');
   const apiUrl = `${apiBaseUrl}?ex_ch=${exChParam}`;
 
   let apiData = null; // Declare apiData outside the try block
-  let fetchError = false; // Declare error flag
+  let fetchError = false;
   try {
     console.log(`Fetching data from TWSE API: ${apiUrl}`);
     const response = await axios.get(apiUrl);
-    apiData = response.data; // Assuming the response is JSON
+    apiData = response.data;
 
     console.log('Received data from TWSE API. Structure:', typeof apiData, Array.isArray(apiData) ? `Array length: ${apiData.length}` : '');
-    // Log a sample of the data to understand its structure
     if (apiData && Array.isArray(apiData.msgArray) && apiData.msgArray.length > 0) {
         console.log('Sample data item from msgArray:', apiData.msgArray[0]);
     } else {
@@ -169,6 +173,7 @@ app.post('/api/stock-data', async (req, res) => {
     // --- Process data from the new API ---
     if (apiData && Array.isArray(apiData.msgArray)) {
         apiData.msgArray.forEach(stockInfo => {
+            const codeWithPrefix = stockInfo.ch; // The API returns the code with prefix, e.g., tse_2330.tw or otc_0050.tw
             const code = stockInfo.c; // Stock code is in 'c' field
             const name = stockInfo.n; // Stock name is in 'n' field
             const latestPrice = parseFloat(stockInfo.z); // Latest trade price is in 'z' field
@@ -185,16 +190,23 @@ app.post('/api/stock-data', async (req, res) => {
                     changePercentage = 'N/A'; // Avoid division by zero
                 }
             }
+            
+            // Determine the key for results object based on original request
+            // Find the original code from stockCodes that matches stockInfo.c or stockInfo.ch
+            const originalCode = stockCodes.find(sc => sc.includes(code) || codeWithPrefix.includes(sc));
 
-            results[code] = {
-                Code: code,
+            results[originalCode || code] = { // Use originalCode if found, otherwise fallback to code from API
+                Code: code, // Store the code without prefix from API
                 Name: name || 'N/A',
                 InstantPrice: isNaN(latestPrice) ? 'N/A' : latestPrice.toFixed(2), // Include instant price
                 PriceChange: priceChange,
                 ChangePercentage: changePercentage,
                 YesterdayClose: stockInfo.y ? parseFloat(stockInfo.y).toFixed(2) : 'N/A', // Add yesterday's closing price
                 t: stockInfo.t, // Add latest trade time
-                v: stockInfo.v // Add trade volume
+                v: stockInfo.v, // Add trade volume
+                UpperLimit: stockInfo.u ? parseFloat(stockInfo.u).toFixed(2) : 'N/A', // 涨停板价格
+                LowerLimit: stockInfo.w ? parseFloat(stockInfo.w).toFixed(2) : 'N/A',  // 跌停板价格
+                Market: stockInfo.ex || (codeWithPrefix.startsWith('otc') ? 'otc' : 'tse') // 市场类型：上市/上柜
             };
         });
     } else {
