@@ -851,9 +851,9 @@ onMounted(async () => {
   fetchStockData(); // Initial fetch
   fetchTaiexData(); // Fetch TAIEX data on mount
   // Set up interval for fetching data every 0.5 seconds
-  const intervalId = setInterval(fetchStockData, 5000);
+  const intervalId = setInterval(fetchStockData, 1000);
   // Set up interval for fetching TAIEX data every 1 seconds
-  const taiexIntervalId = setInterval(fetchTaiexData, 5000);
+  const taiexIntervalId = setInterval(fetchTaiexData, 1000);
 
   // Clear interval on component unmount
   onUnmounted(() => {
