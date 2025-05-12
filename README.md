@@ -33,4 +33,12 @@
  
    `sudo npm run electron:build`
 
+
+## 赞助
+
+<img src="2025-05-12_11-07-50.png" width="20%">
+
+
+
+
 最新更新于 2025.05.12
