@@ -42,8 +42,16 @@ jobs:
         npm install
       working-directory: ./backend
 
-    - name: Build and package app
-      run: npm run electron:build
+    # 使用对应平台的构建脚本
+    - name: Build and package app for macOS
+      if: matrix.os == 'macos-latest'
+      run: npm run electron:build:mac
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and package app for Windows
+      if: matrix.os == 'windows-latest'
+      run: npm run electron:build:win
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

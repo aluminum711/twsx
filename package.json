@@ -6,7 +6,9 @@
   "main": "main.js",
   "scripts": {
     "electron:build": "cd stock-monitor && npm run build && cd .. && rm -rf dist-electron && cd backend && npm install --production && cd .. && electron-builder -mw",
-    "electron:serve": "cd stock-monitor && npm run build && cd .. && electron ."
+    "electron:serve": "cd stock-monitor && npm run build && cd .. && electron .",
+    "electron:build:mac": "cd stock-monitor && npm run build && cd .. && rm -rf dist-electron && cd backend && npm install --production && cd .. && electron-builder --mac",
+    "electron:build:win": "cd stock-monitor && npm run build && cd .. && rm -rf dist-electron && cd backend && npm install --production && cd .. && electron-builder --win"
   },
   "build": {
     "appId": "com.twsx.stockmonitor",
