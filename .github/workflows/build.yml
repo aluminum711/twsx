@@ -2,10 +2,10 @@ name: Build Electron App
 
 on:
   push:
-    branches: [ widget ]  # 只在 widget 分支有推送时触发
-    tags: [ 'v*' ]       # 保留版本标签触发
+    branches: [ widget ]
+    tags: [ 'v*' ]
   pull_request:
-    branches: [ widget ] # 针对 widget 分支的 PR 也触发
+    branches: [ widget ]
 
 jobs:
   build:
@@ -23,20 +23,24 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
-        cache: 'npm'
 
+    # Root project dependencies
+    - name: Install root dependencies
+      run: |
+        npm install
+      working-directory: .
+
+    # Frontend dependencies
     - name: Install frontend dependencies
       run: |
-        cd stock-monitor
         npm install
+      working-directory: ./stock-monitor
 
+    # Backend dependencies
     - name: Install backend dependencies
       run: |
-        cd backend
         npm install
-
-    - name: Install root dependencies
-      run: npm install
+      working-directory: ./backend
 
     - name: Build and package app
       run: npm run electron:build
